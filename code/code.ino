@@ -102,6 +102,11 @@ void setup() {
     sendEmailNotification(subject.c_str(), body.c_str());
   }
 
+
+
+  // ---- 模组初始化（较慢，但网页已可访问） ----
+  modemInit();
+
   // ---- eSIM初始化 ----
   logCaptureLn(String("初始化eSIM..."));
   if (esimInit()) {
@@ -115,8 +120,6 @@ void setup() {
     logCaptureLn(String("eSIM初始化失败或未检测到eUICC芯片"));
   }
 
-  // ---- 模组初始化（较慢，但网页已可访问） ----
-  modemInit();
 }
 
 void loop() {

@@ -195,6 +195,12 @@ static bool findChildTag(const uint8_t* data, size_t len, uint32_t tag, TlvNode*
   return false;
 }
 
+static String tagToHex(uint32_t tag) {
+  String out = String(tag, HEX);
+  out.toUpperCase();
+  return out;
+}
+
 static void appendLength(uint8_t* out, size_t* pos, size_t len) {
   if (len < 0x80) {
     out[(*pos)++] = (uint8_t)len;
@@ -385,10 +391,12 @@ static bool parseCGLAHexPayload(const String& resp, String* hex) {
 }
 
 static bool openChannel(String* channel) {
+  unsigned long started = millis();
   String aidHex = bytesToHex(ESIM_ISD_R_AID, sizeof(ESIM_ISD_R_AID));
   logCaptureLn(String("eSIM CCHO TX: 打开 ISD-R 通道"));
   String resp = sendESimATCommand((String("AT+CCHO=\"") + aidHex + "\"").c_str(), 10000);
   logCaptureLn(String("eSIM CCHO RX: ") + compactAtResponse(resp));
+  logCaptureLn(String("eSIM CCHO 耗时: ") + String(millis() - started) + " ms, rawLen=" + String(resp.length()));
   String payload;
   if (!parseAtPayload(resp, "+CCHO:", &payload)) {
     if (resp.indexOf("+CME ERROR: 20") >= 0) {
@@ -420,15 +428,17 @@ static bool openChannel(String* channel) {
     return false;
   }
   *channel = String(channelId);
-  logCaptureLn(String("eSIM 通道已打开: ") + *channel);
+  logCaptureLn(String("eSIM 通道已打开: ") + *channel + ", total=" + String(millis() - started) + " ms");
   return true;
 }
 
 static void closeChannel(const String& channel) {
   if (channel.length() == 0) return;
+  unsigned long started = millis();
   logCaptureLn(String("eSIM CCHC TX: 关闭通道 ") + channel);
   String resp = sendESimATCommand((String("AT+CCHC=") + channel).c_str(), 5000);
   logCaptureLn(String("eSIM CCHC RX: ") + compactAtResponse(resp));
+  logCaptureLn(String("eSIM CCHC 耗时: ") + String(millis() - started) + " ms, rawLen=" + String(resp.length()));
 }
 
 static bool transmitApdu(const String& channel, const uint8_t* tx, size_t txLen, uint8_t** rx, size_t* rxLen) {
@@ -436,9 +446,11 @@ static bool transmitApdu(const String& channel, const uint8_t* tx, size_t txLen,
   *rxLen = 0;
   String txHex = bytesToHex(tx, txLen);
   String cmd = "AT+CGLA=" + channel + "," + String(txHex.length()) + ",\"" + txHex + "\"";
+  unsigned long started = millis();
   logCaptureLn(String("eSIM CGLA TX: channel=") + channel + ", bytes=" + String(txLen));
   String resp = sendESimATCommand(cmd.c_str(), 30000);
   logCaptureLn(String("eSIM CGLA RX: ") + compactAtResponse(resp));
+  logCaptureLn(String("eSIM CGLA 串口耗时: ") + String(millis() - started) + " ms, rawLen=" + String(resp.length()));
   String hex;
   if (!parseCGLAHexPayload(resp, &hex)) {
     setError(String("APDU 传输失败，无法解析响应: ") + compactAtResponse(resp));
@@ -456,6 +468,7 @@ static bool transmitApdu(const String& channel, const uint8_t* tx, size_t txLen,
       hex = extracted;
     }
   }
+  logCaptureLn(String("eSIM CGLA HEX长度: ") + String(hex.length()) + " chars");
 
   size_t maxLen = hex.length() / 2;
   uint8_t* buf = (uint8_t*)malloc(maxLen);
@@ -469,6 +482,7 @@ static bool transmitApdu(const String& channel, const uint8_t* tx, size_t txLen,
     return false;
   }
   *rx = buf;
+  logCaptureLn(String("eSIM CGLA 解析耗时: ") + String(millis() - started) + " ms, rxLen=" + String(*rxLen));
   return true;
 }
 
@@ -496,8 +510,11 @@ static uint8_t classByteForChannel(const String& channel) {
 }
 
 static bool es10xCommand(const uint8_t* derReq, size_t derReqLen, uint8_t** out, size_t* outLen) {
+  unsigned long started = millis();
   *out = NULL;
   *outLen = 0;
+
+  logCaptureLn(String("eSIM ES10x 开始: reqLen=") + String(derReqLen));
 
   String channel;
   if (!openChannel(&channel)) return false;
@@ -517,9 +534,16 @@ static bool es10xCommand(const uint8_t* derReq, size_t derReqLen, uint8_t** out,
   apdu[4] = (uint8_t)derReqLen;
   memcpy(apdu + 5, derReq, derReqLen);
 
+  int chunkNo = 0;
   while (true) {
+    chunkNo++;
+    unsigned long chunkStarted = millis();
     uint8_t* rx = NULL;
     size_t rxLen = 0;
+    logCaptureLn(String("eSIM APDU 分片请求 #") + String(chunkNo) +
+                 ": txLen=" + String(5 + derReqLen) +
+                 ", ins=0x" + bytesToHex(apdu + 1, 1) +
+                 ", le/lc=" + String(apdu[4]));
     if (!transmitApdu(channel, apdu, 5 + derReqLen, &rx, &rxLen)) {
       free(rx);
       goto done;
@@ -534,7 +558,8 @@ static bool es10xCommand(const uint8_t* derReq, size_t derReqLen, uint8_t** out,
     uint8_t sw2 = rx[rxLen - 1];
     logCaptureLn(String("eSIM APDU 分片: data=") + String(rxLen - 2) +
                  " bytes, SW=" + bytesToHex(rx + rxLen - 2, 2) +
-                 ", totalBefore=" + String(*outLen));
+                 ", totalBefore=" + String(*outLen) +
+                 ", elapsed=" + String(millis() - chunkStarted) + " ms");
     if (!appendResponseData(out, outLen, rx, rxLen - 2)) {
       free(rx);
       goto done;
@@ -564,6 +589,9 @@ static bool es10xCommand(const uint8_t* derReq, size_t derReqLen, uint8_t** out,
 
 done:
   closeChannel(channel);
+  logCaptureLn(String("eSIM ES10x 结束: ok=") + String(ok ? "true" : "false") +
+               ", totalResp=" + String(*outLen) +
+               " bytes, elapsed=" + String(millis() - started) + " ms");
   if (!ok) {
     free(*out);
     *out = NULL;
@@ -628,6 +656,9 @@ bool esimGetEID(char* eid, size_t bufferSize) {
 }
 
 int esimGetProfiles(ESimProfile* profiles, int maxProfiles) {
+  unsigned long totalStarted = millis();
+  logCaptureLn(String("eSIM List 开始: maxProfiles=") + String(maxProfiles) +
+               ", freeHeap=" + String(ESP.getFreeHeap()));
   if (!profiles || maxProfiles <= 0) {
     setError("profile 缓冲区无效");
     return -1;
@@ -641,20 +672,36 @@ int esimGetProfiles(ESimProfile* profiles, int maxProfiles) {
   };
   uint8_t* resp = NULL;
   size_t respLen = 0;
-  if (!es10xCommand(request, sizeof(request), &resp, &respLen)) return -1;
+  unsigned long apduStarted = millis();
+  logCaptureLn(String("eSIM List APDU请求: derLen=") + String(sizeof(request)));
+  if (!es10xCommand(request, sizeof(request), &resp, &respLen)) {
+    logCaptureLn(String("eSIM List APDU失败: elapsed=") + String(millis() - apduStarted) +
+                 " ms, err=" + String(esimGetLastError()));
+    return -1;
+  }
+  logCaptureLn(String("eSIM List APDU完成: respLen=") + String(respLen) +
+               " bytes, elapsed=" + String(millis() - apduStarted) + " ms");
 
+  unsigned long parseStarted = millis();
+  logCaptureLn(String("eSIM List TLV解析开始: respLen=") + String(respLen));
   TlvNode top, okNode;
   if (!readTlv(resp, respLen, 0, &top) || top.tag != 0xBF2D ||
       !findChildTag(top.value, top.length, 0xA0, &okNode)) {
     free(resp);
     setError("无法解析 profile 列表响应");
+    logCaptureLn(String("eSIM List TLV解析失败: elapsed=") + String(millis() - parseStarted) + " ms");
     return -1;
   }
+  logCaptureLn(String("eSIM List TLV顶层: tag=0x") + tagToHex(top.tag) +
+               ", len=" + String(top.length) +
+               ", okLen=" + String(okNode.length));
 
   int count = 0;
   size_t pos = 0;
   TlvNode profileNode;
   while (count < maxProfiles && readTlv(okNode.value, okNode.length, pos, &profileNode)) {
+    unsigned long profileStarted = millis();
+    size_t profileOffset = pos;
     pos = profileNode.nextOffset;
     if (profileNode.tag != 0xE3 && profileNode.tag != 0xBF25) continue;
 
@@ -692,10 +739,21 @@ int esimGetProfiles(ESimProfile* profiles, int maxProfiles) {
           break;
       }
     }
+    logCaptureLn(String("eSIM List profile #") + String(count + 1) +
+                 ": offset=" + String(profileOffset) +
+                 ", tag=0x" + tagToHex(profileNode.tag) +
+                 ", len=" + String(profileNode.length) +
+                 ", iccid=" + String(profile.iccid) +
+                 ", state=" + String(profile.state) +
+                 ", elapsed=" + String(millis() - profileStarted) + " ms");
     count++;
   }
 
   free(resp);
+  logCaptureLn(String("eSIM List 完成: count=") + String(count) +
+               ", parseElapsed=" + String(millis() - parseStarted) +
+               " ms, totalElapsed=" + String(millis() - totalStarted) +
+               " ms, freeHeap=" + String(ESP.getFreeHeap()));
   return count;
 }
 

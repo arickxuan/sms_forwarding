@@ -1144,13 +1144,18 @@ void handleESim() {
     }
   }
   else if (action == "list") {
+    unsigned long listStarted = millis();
     logCaptureLn(String("网页端获取eSIM配置列表..."));
     
     ESimProfile profileList[10];
+    unsigned long callStarted = millis();
     count = esimGetProfiles(profileList, 10);
+    logCaptureLn(String("网页端eSIM list 调用完成: count=") + String(count) +
+                 ", elapsed=" + String(millis() - callStarted) + " ms");
     
     if (count >= 0) {
       success = true;
+      unsigned long jsonStarted = millis();
       profiles = "[";
       for (int i = 0; i < count; i++) {
         if (i > 0) profiles += ",";
@@ -1165,9 +1170,12 @@ void handleESim() {
       }
       profiles += "]";
       message = "成功获取配置列表";
+      logCaptureLn(String("网页端eSIM list JSON构造完成: len=") + String(profiles.length()) +
+                   ", elapsed=" + String(millis() - jsonStarted) + " ms");
     } else {
       message = esimGetLastError();
     }
+    logCaptureLn(String("网页端eSIM list 总耗时: ") + String(millis() - listStarted) + " ms");
   }
   else if (action == "enable") {
     String iccid = server.arg("iccid");
