@@ -189,6 +189,30 @@ static void appendTlv(uint8_t* out, size_t* pos, uint32_t tag, const uint8_t* va
   }
 }
 
+static String sendESimATCommand(const char* cmd, unsigned long timeout) {
+  while (Serial1.available()) Serial1.read();
+  Serial1.println(cmd);
+
+  unsigned long start = millis();
+  String resp = "";
+  while (millis() - start < timeout) {
+    if (Serial1.available()) {
+      char c = Serial1.read();
+      resp += c;
+      if (resp.indexOf("OK") >= 0 || resp.indexOf("ERROR") >= 0) {
+        unsigned long t = millis();
+        while (millis() - t < 50) {
+          if (Serial1.available()) resp += (char)Serial1.read();
+          delay(1);
+        }
+        return resp;
+      }
+    }
+    delay(1);
+  }
+  return resp;
+}
+
 static String compactAtResponse(const String& resp) {
   String out = resp;
   out.replace("\r", " ");
@@ -260,12 +284,28 @@ static bool parseAtPayload(const String& resp, const char* prefix, String* paylo
 static bool openChannel(String* channel) {
   String aidHex = bytesToHex(ESIM_ISD_R_AID, sizeof(ESIM_ISD_R_AID));
   logCaptureLn(String("eSIM CCHO TX: 打开 ISD-R 通道"));
-  String resp = sendATCommand((String("AT+CCHO=\"") + aidHex + "\"").c_str(), 10000);
+  String resp = sendESimATCommand((String("AT+CCHO=\"") + aidHex + "\"").c_str(), 10000);
   logCaptureLn(String("eSIM CCHO RX: ") + compactAtResponse(resp));
   String payload;
   if (!parseAtPayload(resp, "+CCHO:", &payload)) {
-    setError(String("打开 eUICC 通道失败，无法解析响应: ") + compactAtResponse(resp));
-    return false;
+    if (resp.indexOf("+CME ERROR: 20") >= 0) {
+      logCaptureLn(String("eSIM CCHO 返回 CME 20，尝试清理泄漏的逻辑通道后重试"));
+      for (int i = 1; i <= 8; i++) {
+        String closeCmd = "AT+CCHC=" + String(i);
+        String closeResp = sendESimATCommand(closeCmd.c_str(), 2000);
+        logCaptureLn(String("eSIM 清理通道 ") + String(i) + ": " + compactAtResponse(closeResp));
+      }
+
+      resp = sendESimATCommand((String("AT+CCHO=\"") + aidHex + "\"").c_str(), 10000);
+      logCaptureLn(String("eSIM CCHO 重试 RX: ") + compactAtResponse(resp));
+      if (!parseAtPayload(resp, "+CCHO:", &payload)) {
+        setError(String("打开 eUICC 通道失败，清理通道后仍无法解析响应: ") + compactAtResponse(resp));
+        return false;
+      }
+    } else {
+      setError(String("打开 eUICC 通道失败，无法解析响应: ") + compactAtResponse(resp));
+      return false;
+    }
   }
   payload.trim();
   if (payload.length() >= 2 && payload.charAt(0) == '"' && payload.charAt(payload.length() - 1) == '"') {
@@ -284,7 +324,7 @@ static bool openChannel(String* channel) {
 static void closeChannel(const String& channel) {
   if (channel.length() == 0) return;
   logCaptureLn(String("eSIM CCHC TX: 关闭通道 ") + channel);
-  String resp = sendATCommand((String("AT+CCHC=") + channel).c_str(), 5000);
+  String resp = sendESimATCommand((String("AT+CCHC=") + channel).c_str(), 5000);
   logCaptureLn(String("eSIM CCHC RX: ") + compactAtResponse(resp));
 }
 
@@ -294,7 +334,7 @@ static bool transmitApdu(const String& channel, const uint8_t* tx, size_t txLen,
   String txHex = bytesToHex(tx, txLen);
   String cmd = "AT+CGLA=" + channel + "," + String(txHex.length()) + ",\"" + txHex + "\"";
   logCaptureLn(String("eSIM CGLA TX: channel=") + channel + ", bytes=" + String(txLen));
-  String resp = sendATCommand(cmd.c_str(), 30000);
+  String resp = sendESimATCommand(cmd.c_str(), 30000);
   logCaptureLn(String("eSIM CGLA RX: ") + compactAtResponse(resp));
   String payload;
   if (!parseAtPayload(resp, "+CGLA:", &payload)) {
@@ -431,7 +471,7 @@ done:
 
 bool esimInit() {
   setError("");
-  String resp = sendATCommand("AT", 2000);
+  String resp = sendESimATCommand("AT", 2000);
   if (resp.indexOf("OK") < 0) {
     setError(String("模组 AT 无响应: ") + resp);
     s_esimReady = false;
@@ -441,7 +481,7 @@ bool esimInit() {
   const char* commands[] = {"AT+CCHO=?", "AT+CCHC=?", "AT+CGLA=?"};
   for (int i = 0; i < 3; i++) {
     logCaptureLn(String("eSIM 能力检测 TX: ") + commands[i]);
-    resp = sendATCommand(commands[i], 3000);
+    resp = sendESimATCommand(commands[i], 3000);
     logCaptureLn(String("eSIM 能力检测 RX: ") + compactAtResponse(resp));
     if (resp.indexOf("OK") < 0) {
       setError(String("模组不支持 eUICC AT 命令 ") + commands[i] + ": " + resp);
