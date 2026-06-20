@@ -807,7 +807,7 @@ static bool buildProfileIdentifier(const char* idText, uint8_t* out, size_t outS
   return *outLen <= outSize;
 }
 
-static bool profileOperation(uint32_t outerTag, const char* idText, bool refresh, bool enableForReason) {
+static bool profileOperation(uint32_t outerTag, const char* idText, bool refresh, bool enableForReason, bool refreshInChoice = false) {
   s_lastProfileResult = 0;
   uint8_t idTlv[24];
   size_t idTlvLen = 0;
@@ -818,11 +818,20 @@ static bool profileOperation(uint32_t outerTag, const char* idText, bool refresh
   if (outerTag == 0xBF33) {
     appendTlv(request, &pos, outerTag, idTlv, idTlvLen);
   } else {
+    uint8_t refreshValue = refresh ? 0xFF : 0x00;
     uint8_t value[32];
     size_t valueLen = 0;
-    appendTlv(value, &valueLen, 0xA0, idTlv, idTlvLen);
-    uint8_t refreshValue = refresh ? 0xFF : 0x00;
-    appendTlv(value, &valueLen, 0x81, &refreshValue, 1);
+    if (refreshInChoice) {
+      uint8_t choice[28];
+      size_t choiceLen = 0;
+      memcpy(choice + choiceLen, idTlv, idTlvLen);
+      choiceLen += idTlvLen;
+      appendTlv(choice, &choiceLen, 0x81, &refreshValue, 1);
+      appendTlv(value, &valueLen, 0xA0, choice, choiceLen);
+    } else {
+      appendTlv(value, &valueLen, 0xA0, idTlv, idTlvLen);
+      appendTlv(value, &valueLen, 0x81, &refreshValue, 1);
+    }
     appendTlv(request, &pos, outerTag, value, valueLen);
   }
 
@@ -870,6 +879,14 @@ bool esimSwitchProfile(const char* iccidOrAid) {
     logCaptureLn(String("eSIM 切换返回 CAT busy，改用 refresh=false 重试"));
     if (profileOperation(0xBF31, iccidOrAid, false, true)) {
       logCaptureLn(String("eSIM 无刷新切换成功，可能需要重启模组/重新注册网络后生效"));
+      return true;
+    }
+  }
+
+  if (s_lastProfileResult == 5) {
+    logCaptureLn(String("eSIM 仍返回 CAT busy，改用 lpac 兼容格式 refresh=false 重试"));
+    if (profileOperation(0xBF31, iccidOrAid, false, true, true)) {
+      logCaptureLn(String("eSIM lpac兼容格式切换成功，可能需要重启模组/重新注册网络后生效"));
       return true;
     }
   }

@@ -9,14 +9,15 @@
 
 // 发送邮件通知函数
 void sendEmailNotification(const char* subject, const char* body) {
-  if (config.smtpServer.length() == 0 || config.smtpUser.length() == 0 || 
+  if (config.smtpServer.length() == 0 || config.smtpUser.length() == 0 ||
       config.smtpPass.length() == 0 || config.smtpSendTo.length() == 0) {
     logCaptureLn(String("邮件配置不完整，跳过发送"));
     return;
   }
-  
+
   auto statusCallback = [](SMTPStatus status) {
-    logCaptureLn(String(status.text));
+    //logCaptureLn(String(status.text));
+    (void)status;
   };
   smtp.connect(config.smtpServer.c_str(), config.smtpPort, statusCallback);
   if (smtp.isConnected()) {
@@ -94,22 +95,22 @@ String jsonEscape(const String& str) {
 // 发送单个推送通道
 void sendToChannel(const PushChannel& channel, const char* sender, const char* message, const char* timestamp) {
   if (!channel.enabled) return;
-  
+
   // 对于某些推送方式，URL可以为空（使用默认URL）
-  bool needUrl = (channel.type == PUSH_TYPE_POST_JSON || channel.type == PUSH_TYPE_BARK || 
-                  channel.type == PUSH_TYPE_GET || channel.type == PUSH_TYPE_DINGTALK || 
+  bool needUrl = (channel.type == PUSH_TYPE_POST_JSON || channel.type == PUSH_TYPE_BARK ||
+                  channel.type == PUSH_TYPE_GET || channel.type == PUSH_TYPE_DINGTALK ||
                   channel.type == PUSH_TYPE_CUSTOM);
   if (needUrl && channel.url.length() == 0) return;
-  
+
   HTTPClient http;
   String channelName = channel.name.length() > 0 ? channel.name : ("通道" + String(channel.type));
   logCaptureLn(String("发送到推送通道: " + channelName));
-  
+
   int httpCode = 0;
   String senderEscaped = jsonEscape(String(sender));
   String messageEscaped = jsonEscape(String(message));
   String timestampEscaped = jsonEscape(String(timestamp));
-  
+
   switch (channel.type) {
     case PUSH_TYPE_POST_JSON: {
       // 标准POST JSON格式
@@ -124,7 +125,7 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
       httpCode = http.POST(jsonData);
       break;
     }
-    
+
     case PUSH_TYPE_BARK: {
       // Bark推送格式
       http.begin(channel.url);
@@ -137,7 +138,7 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
       httpCode = http.POST(jsonData);
       break;
     }
-    
+
     case PUSH_TYPE_GET: {
       // GET请求，参数放URL里
       String getUrl = channel.url;
@@ -154,7 +155,7 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
       httpCode = http.GET();
       break;
     }
-    
+
     case PUSH_TYPE_DINGTALK: {
       // 钉钉机器人
       break;
@@ -169,7 +170,7 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
       // Server酱
       break;
     }
-    
+
     case PUSH_TYPE_CUSTOM: {
       // 自定义模板
       if (channel.customBody.length() == 0) {
@@ -186,12 +187,12 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
       httpCode = http.POST(body);
       break;
     }
-    
+
     case PUSH_TYPE_FEISHU: {
       // 飞书机器人
       String webhookUrl = channel.url;
       String jsonData = "{";
-      
+
       // 如果配置了secret，需要添加签名
       if (channel.key1.length() > 0) {
         // 飞书使用秒级时间戳
@@ -207,40 +208,40 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
         mbedtls_md_hmac_finish(&ctx, hmacResult);
         mbedtls_md_free(&ctx);
         String sign = base64::encode(hmacResult, 32);
-        
+
         jsonData += "\"timestamp\":\"" + String(ts) + "\",";
         jsonData += "\"sign\":\"" + sign + "\",";
       }
-      
+
       // 飞书消息体
       jsonData += "\"msg_type\":\"text\",";
       jsonData += "\"content\":{\"text\":\"";
       jsonData += "📱短信通知\\n发送者: " + senderEscaped + "\\n内容: " + messageEscaped + "\\n时间: " + timestampEscaped;
       jsonData += "\"}}";
-      
+
       http.begin(webhookUrl);
       http.addHeader("Content-Type", "application/json");
       logCaptureLn(String("飞书: " + jsonData));
       httpCode = http.POST(jsonData);
       break;
     }
-    
+
     case PUSH_TYPE_GOTIFY: {
       // Gotify 推送
       break;
     }
-    
+
     case PUSH_TYPE_TELEGRAM: {
       // Telegram Bot 推送
       // channel.key1 是 Chat ID, channel.key2 是 Bot Token
       break;
     }
-    
+
     default:
       logCaptureLn(String("未知推送类型"));
       return;
   }
-  
+
   if (httpCode > 0) {
     logCaptureF("[%s] 响应码: %d\n", channelName.c_str(), httpCode);
     if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
@@ -259,7 +260,7 @@ void sendSMSToServer(const char* sender, const char* message, const char* timest
     logCaptureLn(String("WiFi未连接，跳过推送"));
     return;
   }
-  
+
   bool hasEnabledChannel = false;
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     if (isPushChannelValid(config.pushChannels[i])) {
@@ -267,12 +268,12 @@ void sendSMSToServer(const char* sender, const char* message, const char* timest
       break;
     }
   }
-  
+
   if (!hasEnabledChannel) {
     logCaptureLn(String("没有启用的推送通道"));
     return;
   }
-  
+
   logCaptureLn(String("\n=== 开始多通道推送 ==="));
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     if (isPushChannelValid(config.pushChannels[i])) {

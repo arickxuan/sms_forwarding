@@ -8,7 +8,7 @@
 #include <Preferences.h>
 #include <pdulib.h>
 #define ENABLE_SMTP
-#define ENABLE_DEBUG
+//#define ENABLE_DEBUG
 #include <ReadyMail.h>
 #include "config_types.h"
 
