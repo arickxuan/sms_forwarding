@@ -400,6 +400,15 @@ const char* htmlPage = R"rawliteral(
         </div>
       </div>
       <div class="card">
+        <div class="card-header">📡 运营商网络注册</div>
+        <div class="card-body">
+          <div class="btn-row"><button class="btn btn-secondary" onclick="modemAction('operator_auto')">自动选网</button><button class="btn btn-secondary" onclick="modemAction('operator_cmcc')">中国移动</button><button class="btn btn-secondary" onclick="modemAction('operator_cucc')">中国联通</button></div>
+          <div class="btn-row"><button class="btn btn-secondary" onclick="modemAction('operator_ctcc')">中国电信</button><button class="btn btn-secondary" onclick="modemAction('operator_cb')">中国广电</button></div>
+          <p class="form-hint">手动注册使用 AT+COPS，可能需要几十秒；是否允许注册取决于当前 SIM/eSIM 的漫游权限。</p>
+          <div class="result-box" id="modemOperatorResult"></div>
+        </div>
+      </div>
+      <div class="card">
         <div class="card-header">✈ 飞行模式</div>
         <div class="card-body">
           <div class="btn-row"><button class="btn btn-danger" id="flightBtn" onclick="toggleFlightMode()">切换飞行模式</button><button class="btn btn-secondary" onclick="queryFlightMode()">查询状态</button></div>
@@ -578,10 +587,11 @@ const char* htmlPage = R"rawliteral(
 
     // ---- Modem Control ----
     function modemAction(action){
-      var names={'restart':'软重启','hardreset':'硬重启','signal':'信号查询','operator':'运营商查询','imei':'IMEI查询'};
+      var names={'restart':'软重启','hardreset':'硬重启','signal':'信号查询','operator':'运营商查询','imei':'IMEI查询','operator_auto':'自动选网','operator_cmcc':'注册中国移动','operator_cucc':'注册中国联通','operator_ctcc':'注册中国电信','operator_cb':'注册中国广电'};
       var name=names[action]||action;
       var resultEl=null;
       if(action==='restart'||action==='hardreset') resultEl=document.getElementById('modemRstResult');
+      else if(action.indexOf('operator_')===0) resultEl=document.getElementById('modemOperatorResult');
       else resultEl=document.getElementById('modemQueryResult');
       if(action==='hardreset'){
         if(!confirm('硬重启将断电重启模组，确定继续？'))return;
@@ -590,6 +600,9 @@ const char* htmlPage = R"rawliteral(
           resultEl.className='result-box result-success';resultEl.textContent=d.message+' — 稍后请手动查询信号确认恢复';
         }).catch(function(e){resultEl.className='result-box result-error';resultEl.textContent='请求失败: '+e;});
         return;
+      }
+      if(action.indexOf('operator_')===0){
+        if(!confirm('确定要执行 '+name+' 吗？手动选网可能需要几十秒，且可能导致短暂无服务。'))return;
       }
       resultEl.className='result-box result-loading';resultEl.textContent=name+'中...';
       fetch('/modem?action='+action).then(function(rr){return rr.json()}).then(function(d){

@@ -1056,6 +1056,45 @@ void handleModem() {
       message = "无法获取 IMEI";
     }
   }
+  else if (action.startsWith("operator_")) {
+    String name;
+    String cmd;
+    if (action == "operator_auto") {
+      name = "自动选网";
+      cmd = "AT+COPS=0";
+    } else if (action == "operator_cmcc") {
+      name = "中国移动";
+      cmd = "AT+COPS=1,2,\"46000\"";
+    } else if (action == "operator_cucc") {
+      name = "中国联通";
+      cmd = "AT+COPS=1,2,\"46001\"";
+    } else if (action == "operator_ctcc") {
+      name = "中国电信";
+      cmd = "AT+COPS=1,2,\"46003\"";
+    } else if (action == "operator_cb") {
+      name = "中国广电";
+      cmd = "AT+COPS=1,2,\"46015\"";
+    }
+
+    if (cmd.length() > 0) {
+      logCaptureLn(String("网页端切换运营商网络: ") + name + " -> " + cmd);
+      String resp = sendATCommand(cmd.c_str(), 60000);
+      logCaptureLn(String("COPS设置响应: " + resp));
+      if (resp.indexOf("OK") >= 0) {
+        success = true;
+        message = "已提交注册到 " + name;
+        String cops = sendATCommand("AT+COPS?", 5000);
+        logCaptureLn(String("COPS查询响应: " + cops));
+        if (cops.indexOf("+COPS:") >= 0) {
+          message += "<br>当前: " + cops;
+        }
+      } else {
+        message = name + " 注册失败: " + resp;
+      }
+    } else {
+      message = "未知运营商切换操作: " + action;
+    }
+  }
   else {
     message = "未知操作: " + action;
   }
