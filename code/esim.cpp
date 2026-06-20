@@ -61,6 +61,71 @@ static bool hexToBytes(const String& hex, uint8_t* out, size_t outSize, size_t* 
   return true;
 }
 
+static String printableHexCandidate(const String& input) {
+  String out;
+  for (int i = 0; i < input.length(); i++) {
+    char c = input.charAt(i);
+    if (isHexChar(c)) {
+      out += c;
+    }
+  }
+  return out;
+}
+
+static bool extractLongestHexRun(const String& input, String* hex) {
+  String best = "";
+  String current = "";
+
+  for (int i = 0; i < input.length(); i++) {
+    char c = input.charAt(i);
+    if (isHexChar(c)) {
+      current += c;
+    } else {
+      if (current.length() > 0 && (current.length() % 2) != 0) current.remove(current.length() - 1);
+      if (current.length() > best.length()) best = current;
+      current = "";
+    }
+  }
+
+  if (current.length() > 0 && (current.length() % 2) != 0) current.remove(current.length() - 1);
+  if (current.length() > best.length()) best = current;
+
+  if (best.length() < 4) return false;
+  *hex = best;
+  return true;
+}
+
+static bool expectedTlvHexLength(const String& hex, size_t* expectedHexLen) {
+  if (hex.length() < 4 || !isHexChar(hex.charAt(0)) || !isHexChar(hex.charAt(1))) return false;
+  int pos = 2;
+  uint8_t firstTag = (hexNibble(hex.charAt(0)) << 4) | hexNibble(hex.charAt(1));
+  if ((firstTag & 0x1F) == 0x1F) {
+    while (pos + 2 <= hex.length()) {
+      uint8_t tagByte = (hexNibble(hex.charAt(pos)) << 4) | hexNibble(hex.charAt(pos + 1));
+      pos += 2;
+      if ((tagByte & 0x80) == 0) break;
+    }
+  }
+  if (pos + 2 > hex.length()) return false;
+  uint8_t lenByte = (hexNibble(hex.charAt(pos)) << 4) | hexNibble(hex.charAt(pos + 1));
+  pos += 2;
+
+  size_t valueLen = 0;
+  if ((lenByte & 0x80) == 0) {
+    valueLen = lenByte;
+  } else {
+    uint8_t lenBytes = lenByte & 0x7F;
+    if (lenBytes == 0 || lenBytes > 3 || pos + lenBytes * 2 > hex.length()) return false;
+    for (uint8_t i = 0; i < lenBytes; i++) {
+      valueLen = (valueLen << 8) | ((hexNibble(hex.charAt(pos)) << 4) | hexNibble(hex.charAt(pos + 1)));
+      pos += 2;
+    }
+  }
+
+  *expectedHexLen = pos + valueLen * 2 + 4; // TLV + SW1/SW2
+  return true;
+}
+
 static String bytesToHex(const uint8_t* data, size_t len) {
   static const char digits[] = "0123456789ABCDEF";
   String out;
@@ -194,19 +259,28 @@ static String sendESimATCommand(const char* cmd, unsigned long timeout) {
   Serial1.println(cmd);
 
   unsigned long start = millis();
+  unsigned long lastByteAt = start;
+  bool sawFinal = false;
   String resp = "";
+  resp.reserve(2048);
   while (millis() - start < timeout) {
-    if (Serial1.available()) {
+    bool gotByte = false;
+    while (Serial1.available()) {
       char c = Serial1.read();
       resp += c;
-      if (resp.indexOf("OK") >= 0 || resp.indexOf("ERROR") >= 0) {
-        unsigned long t = millis();
-        while (millis() - t < 50) {
-          if (Serial1.available()) resp += (char)Serial1.read();
-          delay(1);
-        }
-        return resp;
-      }
+      gotByte = true;
+      lastByteAt = millis();
+    }
+
+    if (gotByte) {
+      String tail = resp;
+      tail.trim();
+      sawFinal = tail.endsWith("OK") || tail.endsWith("ERROR") ||
+                 tail.indexOf("+CME ERROR:") >= 0 || tail.indexOf("+CMS ERROR:") >= 0;
+    }
+
+    if (sawFinal && millis() - lastByteAt >= 300) {
+      return resp;
     }
     delay(1);
   }
@@ -343,19 +417,35 @@ static bool transmitApdu(const String& channel, const uint8_t* tx, size_t txLen,
   }
 
   int comma = payload.indexOf(',');
-  if (comma < 0) {
-    // Some modems return only the response APDU HEX without the leading length.
-    if (isHexString(payload)) {
-      comma = -1;
-    } else {
-      setError(String("无法解析 CGLA 响应: ") + payload);
-      return false;
-    }
-  }
   String hex = comma >= 0 ? payload.substring(comma + 1) : payload;
   hex.trim();
   if (hex.length() >= 2 && hex.charAt(0) == '"' && hex.charAt(hex.length() - 1) == '"') {
     hex = hex.substring(1, hex.length() - 1);
+  }
+  hex.trim();
+
+  if (!isHexString(hex)) {
+    String extracted;
+    String compacted = printableHexCandidate(hex);
+    if (isHexString(compacted) && compacted.length() >= 4) {
+      logCaptureLn(String("eSIM CGLA HEX 清洗: 原长度=") + String(hex.length()) + ", 收集长度=" + String(compacted.length()));
+      hex = compacted;
+    } else if (extractLongestHexRun(hex, &extracted)) {
+      logCaptureLn(String("eSIM CGLA HEX 清洗: 原长度=") + String(hex.length()) + ", 最长片段=" + String(extracted.length()));
+      hex = extracted;
+    }
+  }
+
+  size_t expectedHexLen = 0;
+  bool hasMoreStatus = hex.length() >= 4 &&
+                       hex.charAt(hex.length() - 4) == '6' &&
+                       hex.charAt(hex.length() - 3) == '1';
+  if (isHexString(hex) && expectedTlvHexLength(hex, &expectedHexLen) &&
+      hex.length() < expectedHexLen && !hasMoreStatus) {
+    setError(String("CGLA 响应疑似截断: 当前HEX长度=") + String(hex.length()) +
+             ", 期望至少=" + String(expectedHexLen) +
+             "，请确认 SERIAL_BUFFER_SIZE 已生效并重启模组");
+    return false;
   }
 
   size_t maxLen = hex.length() / 2;
@@ -366,7 +456,7 @@ static bool transmitApdu(const String& channel, const uint8_t* tx, size_t txLen,
   }
   if (!hexToBytes(hex, buf, maxLen, rxLen)) {
     free(buf);
-    setError(String("CGLA 响应不是合法 HEX: ") + hex);
+    setError(String("CGLA 响应不是合法 HEX: len=") + String(hex.length()) + ", value=" + printableHexCandidate(hex));
     return false;
   }
   *rx = buf;

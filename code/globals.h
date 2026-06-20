@@ -22,7 +22,7 @@
 #define LED_BUILTIN 8
 #endif
 
-#define SERIAL_BUFFER_SIZE 500
+#define SERIAL_BUFFER_SIZE 4096
 #define MAX_PDU_LENGTH 300
 
 // 全局变量声明
