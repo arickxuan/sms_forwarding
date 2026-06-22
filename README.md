@@ -1,10 +1,11 @@
 # 低成本短信转发器
 
-> 当前分支为新方案，老方案请前往[luatos分支](https://github.com/chenxuuu/sms_forwarding/tree/old-luatos)。  
-本项目仅用于接收短信与进行保号相关功能。  
-多卡控制、通话、拨号、开放接口、自动化等功能永远不会支持，请勿提出相关需求。
+> 本项目修改自linuxdo大佬的[项目](https://github.com/chenxuuu/sms_forwarding
 
-[后台页面演示](https://sms.j2.cx/)
+本项目仅用于接收短信与进行保号相关功能。  
+多卡控制、通话、拨号、开放接口、eSIM卡管理等功能永远不会支持，请勿提出相关需求。
+
+![后台页面演示](assets/esim.png)
 
 本项目旨在使用低成本的硬件设备，实现短信的自动转发功能，支持多种推送方式同时启用。
 
@@ -22,6 +23,7 @@
 - 支持通过WEB界面进行Ping测试，以极低的成本消耗余额
 - 支持长短信自动合并（30秒超时）
 - 支持管理员短信远程发送短信和重启设备
+- 支持eSIM卡管理功能
 
 ## 推送通道支持
 
@@ -31,22 +33,12 @@
 |---------|------|---------|
 | **POST JSON** | 通用HTTP POST | URL |
 | **Bark** | iOS推送服务 | Bark服务器URL |
-| **GET请求** | URL参数方式 | URL |
-| **钉钉机器人** | 企业群通知 | Webhook URL，可选Secret加签 |
-| **PushPlus** | 微信公众号推送 | Token |
-| **Server酱** | 微信推送服务 | SendKey |
-| **自定义模板** | 灵活的JSON模板 | URL + 请求体模板 |
 | **飞书机器人** | 自定义通知 | Webhook URL |
 
 ### 推送格式说明
 
 - **POST JSON**: `{"sender":"发送者号码","message":"短信内容","timestamp":"时间戳"}`
 - **Bark**: `{"title":"发送者号码","body":"短信内容"}`
-- **GET请求**: `URL?sender=xxx&message=xxx&timestamp=xxx`（自动URL编码）
-- **钉钉机器人**: 文本消息格式，支持加签验证
-- **PushPlus**: 使用Token推送，支持HTML格式
-- **Server酱**: 使用SendKey推送，支持Markdown格式
-- **自定义模板**: 使用`{sender}`、`{message}`、`{timestamp}`占位符
 - **飞书机器人**: 文本消息格式，支持加签验证
 
 |状态信息|主动ping|
@@ -55,20 +47,19 @@
 
 ## 硬件搭配
 
-如果希望自行焊接硬件，参考下面的硬件搭配，总成本约¥27.8，仅支持移动/联通卡。
+如果希望自行焊接硬件，参考下面的硬件搭配。
 
-- ESP32C3开发板，当前选用[ESP32C3 Super Mini](https://item.taobao.com/item.htm?id=852057780489&skuId=5813710390565)，¥9.5包邮
-- ML307R-DC开发板，当前选用[小蓝鲸ML307R-DC核心板](https://item.taobao.com/item.htm?id=797466121802&skuId=5722077108045)，¥16.3包邮
-- [4G FPC天线](https://item.taobao.com/item.htm?id=797466121802&skuId=5722077108045)，¥2，与核心板同购
+- ESP32C3开发板
+- ML307A开发板
+- 4G FPC天线
 
-若希望直接使用成品，可选直接购以下套件，支持移动/联通/电信卡：
-
-- [小蓝鲸WIFI短信宝](https://item.taobao.com/item.htm?id=1003711355912)
-- [4G FPC天线](https://item.taobao.com/item.htm?id=1003711355912&skuId=6162872574943)，与开发板同购
+就不推荐某某鲸了，过程不太愉快，解决不了问题就说我焊短路了，把模块烧了。气死我了，果断退货。
+其实是usb-tll兼容问题，直连树莓派就好了
+自行某宝搜索型号即可
 
 ## 硬件连接
 
-ESP32C3 与 ML307R-DC 通过串口（UART）连接，接线如下：
+ESP32C3 与 ML307A 通过串口（UART）连接，接线如下：
 
 ```
 ┌───────────────────────────────────────────────┐
@@ -94,15 +85,23 @@ ESP32C3 与 ML307R-DC 通过串口（UART）连接，接线如下：
                            └─────────────────┘
 ```
 改变接线方式，核心板不再和en短接而是和esp32c3的GPIO5连接，使模块能够被控制上下电(代码也同步改动)。
-可通过USB连接ESP32C3进行编程和供电，正常工作时，ESP32C3的虚拟串口数据将直接被转发到ML307R-DC，方便调试。
+可通过USB连接ESP32C3进行编程和供电，正常工作时，ESP32C3的虚拟串口数据将直接被转发到ML307A，方便调试。
 
 ## 软件组成
 
 - ESP32C3运行自己的`Arduino`固件，负责连接WiFi和接收ML307R-DC发送过来的短信数据，然后转发到指定HTTP接口或邮箱
-- ML307R-DC运行默认的AT固件，不用动
+- ML307A运行默认的AT固件，不用动
+
+
 
 需要在`Arduino IDE`中单独安装这些库：
 
+其他开发板管理器地址：
+https://jihulab.com/esp-mirror/espressif/arduino-esp32/-/raw/gh-pages/package_esp32_index_cn.json
+
+开发板管理器 esp32
+
+lib：
 - **ReadyMail** by Mobizt
 - **pdulib** by David Henry
 
