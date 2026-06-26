@@ -126,5 +126,25 @@ lib：
 
 需要在`Arduino IDE`中安装ESP32开发板支持，参考[官方文档](https://docs.espressif.com/projects/arduino-esp32/en/latest/installing.html)，版型选`MakerGO ESP32 C3 SuperMini`。
 
+## 保号
+需要定时发送短信或消耗一点流量进行保号也很简单。（Linux为例）
+1. 获取相关http请求
+![保号](assets/baohao.png)
+这是查询网络状态的抓包，发短信，ping消耗流量也是类似。获取curl。`Authorization: Basic XXXXXXX` 是验证用户名密码的。（因此暴露到公网是危险的）
+```
+
+curl 'http://192.168.38.201/query?type=network' \
+  -H 'Accept: */*' \
+  -H 'Authorization: Basic XXXXXXX' \
+  --insecure
+
+```
+2. 编写bash脚本
+简单的流程就是，切卡->一直查询网络状态直到成功->发短信
+交给codex编写即可
+
+3. 设置定时任务
+想好多久执行一次，交给codex编写即可
+
 ## 友链
 [LINUX DO](https://linux.do)
