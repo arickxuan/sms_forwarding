@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMS Forwarding</title>
+<style>
+  :root{
+    --ink:#171717;--body:#4d4d4d;--mute:#8a8a8a;--canvas:#fff;--soft:#fafafa;--soft2:#f4f4f5;
+    --line:#e8e8ea;--line2:#cfcfd3;--brand:#0070f3;--ok:#16a34a;--err:#dc2626;--warn:#b45309;--warnbg:#fff7e6;
+    --r:8px;--rs:6px;--rp:100px;--sh:0 0 0 1px rgba(0,0,0,.07),0 1px 2px rgba(0,0,0,.04);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+    font-size:14px;line-height:1.5;color:var(--ink);background:var(--soft);min-height:100vh}
+  .topbar{background:var(--ink);color:#fff;display:flex;align-items:center;gap:10px;height:46px;padding:0 16px}
+  .brand{font-size:15px;font-weight:600;letter-spacing:-.3px;white-space:nowrap}
+  .brand small{font-size:11px;color:rgba(255,255,255,.45);margin-left:6px;font-weight:400}
+  .wrap{max-width:760px;margin:0 auto;padding:14px 20px 56px}
+  .tabs{position:sticky;top:0;z-index:50;display:flex;gap:4px;padding:8px 0;margin:0 0 16px;background:var(--soft)}
+  .tabs a{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:10px;
+    border-radius:var(--rs);font-size:14px;font-weight:600;cursor:pointer;transition:.12s;
+    color:var(--body);background:var(--canvas);box-shadow:0 0 0 1px var(--line)}
+  .tabs a:hover{background:var(--soft2)}
+  .tabs a.active{background:var(--ink);color:#fff;box-shadow:none}
+  .tab-panel{display:none}.tab-panel.active{display:block}
+  h1.title{font-size:21px;font-weight:600;letter-spacing:-.4px;margin-bottom:4px}
+  p.sub{font-size:13px;color:var(--mute);margin-bottom:18px}
+  .group-label{font-size:11px;font-weight:600;color:var(--mute);text-transform:uppercase;letter-spacing:.5px;
+    font-family:ui-monospace,'SF Mono',monospace;margin:24px 2px 10px}
+  .health{display:flex;align-items:center;gap:12px;background:var(--canvas);border-radius:var(--r);
+    box-shadow:var(--sh);padding:16px 18px;margin-bottom:14px}
+  .health .big{font-size:17px;font-weight:600}
+  .health .led{width:11px;height:11px;border-radius:50%;background:var(--mute);flex-shrink:0}
+  .health.good .led{background:var(--ok);box-shadow:0 0 0 4px rgba(22,163,74,.15)}
+  .health.bad .led{background:var(--err);box-shadow:0 0 0 4px rgba(220,38,38,.15)}
+  .health .meta{margin-left:auto;font-size:12px;color:var(--mute);text-align:right;line-height:1.4}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+    border-radius:var(--r);overflow:hidden;box-shadow:var(--sh);margin-bottom:14px}
+  .grid .cell{background:var(--canvas);padding:13px 14px}
+  .grid .k{font-size:10px;color:var(--mute);text-transform:uppercase;letter-spacing:.4px;
+    font-family:ui-monospace,'SF Mono',monospace;margin-bottom:4px}
+  .grid .v{font-size:15px;font-weight:600;word-break:break-all}
+  .card{background:var(--canvas);border-radius:var(--r);box-shadow:var(--sh);margin-bottom:14px}
+  .card>h3{padding:14px 18px 0;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .card>h3 .right{margin-left:auto;font-weight:400}
+  .card>.body{padding:14px 18px 18px}
+  .dest{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .dest:last-child{border-bottom:none}
+  .dest .ic{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--soft2);font-size:14px;flex-shrink:0}
+  .dest .nm{font-weight:500}.dest .ds{font-size:12px;color:var(--mute);word-break:break-all}
+  .dest .tag{margin-left:auto;font-size:11px;font-weight:600;padding:3px 10px;border-radius:var(--rp);flex-shrink:0}
+  .tag.on{background:#ecfdf3;color:var(--ok)}.tag.off{background:var(--soft2);color:var(--mute)}
+  .fg{margin-bottom:13px}.fg:last-child{margin-bottom:0}
+  label.l{display:block;font-size:12px;font-weight:500;color:var(--body);margin-bottom:4px}
+  input,select,textarea{width:100%;padding:8px 11px;font-size:13px;font-family:inherit;color:var(--ink);
+    background:var(--canvas);border:1px solid var(--line);border-radius:var(--rs);outline:none;transition:.15s}
+  input:focus,select:focus,textarea:focus{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+  select{cursor:pointer}textarea{resize:vertical;min-height:64px;line-height:1.5}
+  .row{display:flex;gap:12px}.row .fg{flex:1}
+  .hint{font-size:11px;color:var(--mute);margin-top:4px;line-height:1.45}
+  .warn{font-size:11px;color:var(--warn);background:var(--warnbg);padding:9px 12px;border-radius:var(--rs);margin-bottom:13px;line-height:1.5}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 15px;font-size:13px;
+    font-weight:500;font-family:inherit;border:none;border-radius:var(--rp);cursor:pointer;transition:.15s;white-space:nowrap}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn-pri{background:var(--ink);color:#fff}.btn-pri:hover{background:#000}
+  .btn-sec{background:var(--canvas);color:var(--ink);box-shadow:0 0 0 1px var(--line2)}.btn-sec:hover{background:var(--soft2)}
+  .btn-dan{background:var(--err);color:#fff}.btn-dan:hover{background:#b91c1c}
+  .btn-sm{padding:5px 11px;font-size:12px;border-radius:var(--rs)}
+  .btn-blk{width:100%}.btn-link{background:none;color:var(--brand);padding:0;font-weight:500;cursor:pointer}
+  .save-bar{position:sticky;bottom:0;background:linear-gradient(transparent,var(--soft) 22%);padding:16px 0 4px;margin-top:4px}
+  .save-bar .btn{padding:12px;font-size:14px}
+  .brow{display:flex;gap:8px;flex-wrap:wrap}.brow .btn{flex:1;min-width:88px}.brow+.brow{margin-top:8px}
+  .pch{border:1px solid var(--line);border-radius:var(--r);margin-bottom:10px;background:var(--soft);overflow:hidden;transition:.15s}
+  .pch.on{border-color:var(--line2);background:var(--canvas)}
+  .pch-h{display:flex;align-items:center;gap:11px;padding:12px 14px;cursor:pointer;user-select:none}
+  .pch-h .sw{position:relative;width:38px;height:22px;border-radius:var(--rp);background:var(--line2);flex-shrink:0;transition:.18s}
+  .pch-h .sw::after{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.18s;box-shadow:0 1px 2px rgba(0,0,0,.25)}
+  .pch.on .pch-h .sw{background:var(--ink)}.pch.on .pch-h .sw::after{left:18px}
+  .pch-h .nm{font-size:13px;font-weight:600;flex:1}
+  .pch-h .badge{font-size:11px;color:var(--mute);background:var(--soft2);padding:2px 9px;border-radius:var(--rp)}
+  .pch.on .pch-h .badge{background:#eef4ff;color:var(--brand)}
+  .pch-b{display:none;padding:0 14px 14px;border-top:1px solid var(--line)}
+  .pch.on .pch-b{display:block}
+  .pch-b .fg{margin-top:13px}
+  .ptip{font-size:11px;color:var(--body);margin-top:5px;padding:8px 11px;background:var(--soft2);border-radius:var(--rs);font-family:ui-monospace,'SF Mono',monospace;line-height:1.5;white-space:pre-wrap}
+  details.adv{background:var(--canvas);border-radius:var(--r);box-shadow:var(--sh);margin-bottom:14px}
+  details.adv>summary{list-style:none;cursor:pointer;padding:14px 18px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+  details.adv>summary::-webkit-details-marker{display:none}
+  details.adv>summary::after{content:'\25B8';margin-left:auto;color:var(--mute);transition:.15s}
+  details.adv[open]>summary::after{transform:rotate(90deg)}
+  details.adv .body{padding:0 18px 18px}
+  .res{margin-top:12px;padding:10px 13px;border-radius:var(--rs);font-size:12px;line-height:1.5;display:none}
+  .res.show{display:block}.res.ok{background:#ecfdf3;color:#15803d}.res.er{background:#fef2f2;color:#b91c1c}
+  .res.ld{background:#fffbeb;color:#b45309}.res.in{background:#eff6ff;color:#1d4ed8}
+  table.t,table.info-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}
+  table.t td,table.info-table td,table.info-table th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left}
+  table.t td:first-child,table.info-table td:first-child{font-weight:500;color:var(--body);width:42%}
+  #atLog{background:var(--ink);color:#5eead4;font-family:ui-monospace,'SF Mono',monospace;min-height:130px;max-height:260px;
+    overflow-y:auto;padding:12px 13px;border-radius:var(--rs);margin-bottom:10px;font-size:12px;white-space:pre-wrap;word-break:break-all;line-height:1.55}
+  .atbar{display:flex;gap:6px}.atbar input{flex:1;font-family:ui-monospace,monospace}.atbar .btn{min-width:62px}
+  #logView{background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:var(--rs);font-family:ui-monospace,monospace;
+    font-size:12px;line-height:1.6;max-height:54vh;min-height:260px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+  @media(max-width:640px){
+    .topbar{gap:10px;padding:0 12px}.brand small{display:none}
+    .wrap{padding:14px 13px 44px}.grid{grid-template-columns:repeat(2,1fr)}.row{flex-direction:column;gap:0}
+    .health{flex-wrap:wrap}.health .meta{margin-left:0;text-align:left;width:100%}
+  }
+</style>
+</head>
+<body>
+<header class="topbar"><div class="brand">SMS FWD<small>短信转发器</small></div></header>
+<div class="wrap">
+  <nav class="tabs">
+    <a data-tab="status" class="active">📡 状态</a>
+    <a data-tab="settings">⚙ 设置</a>
+    <a data-tab="console">🛠 控制台</a>
+  </nav>
+
+  <!-- ① 状态 -->
+  <section class="tab-panel active" id="tab-status">
+    <h1 class="title">状态</h1>
+    <p class="sub">设备运行概况，打开即看</p>
+    <div class="health" id="health">
+      <div class="led"></div>
+      <div><div class="big" id="healthText">加载中…</div><div class="hint" id="healthSub" style="margin:0">&nbsp;</div></div>
+      <div class="meta">Uptime <b id="st-up">—</b><br>Free Heap <b id="st-heap">—</b></div>
+    </div>
+    <div class="grid">
+      <div class="cell"><div class="k">模组</div><div class="v" id="st-modem">—</div></div>
+      <div class="cell"><div class="k">设备 IP</div><div class="v" id="st-ip">—</div></div>
+      <div class="cell"><div class="k">WiFi 信号</div><div class="v" id="st-rssi">—</div></div>
+      <div class="cell" style="grid-column:span 3"><div class="k">WiFi SSID</div><div class="v" id="st-ssid">—</div></div>
+    </div>
+    <div class="card">
+      <h3>📶 信号与网络 <span class="hint right">慢查询（AT），按需</span></h3>
+      <div class="body">
+        <button class="btn btn-sec btn-sm" onclick="loadNet()">查询信号 / 运营商 / 注册状态</button>
+        <div class="res" id="netRes"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>🔗 转发目标 <span class="btn btn-link right" onclick="switchTab('settings')">去设置 ›</span></h3>
+      <div class="body" id="destList"><p class="hint" style="margin:0">加载中…</p></div>
+    </div>
+  </section>
+
+  <!-- ② 设置 -->
+  <section class="tab-panel" id="tab-settings">
+    <h1 class="title">设置</h1>
+    <p class="sub">改任意项后，点底部「保存全部配置」一次保存</p>
+    <form id="cfgForm">
+      <div class="group-label">转发去哪（设备的核心）</div>
+      <div class="card"><h3>📧 邮件通知 (SMTP)</h3><div class="body">
+        <div class="row">
+          <div class="fg"><label class="l">SMTP 服务器</label><input name="smtpServer" placeholder="smtp.qq.com"></div>
+          <div class="fg" style="max-width:120px"><label class="l">端口</label><input name="smtpPort" type="number" placeholder="465"></div>
+        </div>
+        <div class="row">
+          <div class="fg"><label class="l">邮箱账号</label><input name="smtpUser" placeholder="your@qq.com"></div>
+          <div class="fg"><label class="l">密码 / 授权码</label><input name="smtpPass" type="password" placeholder="授权码"></div>
+        </div>
+        <div class="fg"><label class="l">接收邮件地址</label><input name="smtpSendTo" placeholder="receiver@example.com"></div>
+      </div></div>
+      <div class="card"><h3>📲 推送通道 <span class="hint right" id="pcount"></span></h3><div class="body">
+        <p class="hint" style="margin:0 0 12px">点开关启用，支持 POST JSON / Bark / 钉钉 / 飞书 / PushPlus / Server酱 / Gotify / Telegram</p>
+        <div id="channels"></div>
+      </div></div>
+      <div class="group-label">系统</div>
+      <div class="card"><h3>👤 管理员 &amp; 黑名单</h3><div class="body">
+        <div class="fg"><label class="l">管理员手机号</label><input name="adminPhone" placeholder="13800138000">
+          <p class="hint">此号码可发短信远程指令（SMS:号码:内容 发短信、RESET 重启）</p></div>
+        <div class="fg"><label class="l">号码黑名单</label><textarea name="numberBlackList" rows="3" placeholder="每行一个号码"></textarea>
+          <p class="hint">黑名单号码发来的短信将被忽略</p></div>
+      </div></div>
+      <div class="card"><h3>🔐 登录凭据</h3><div class="body">
+        <div class="warn">首次使用请立即修改默认密码！默认: admin / admin123</div>
+        <div class="row">
+          <div class="fg"><label class="l">管理账号</label><input name="webUser" placeholder="admin"></div>
+          <div class="fg"><label class="l">管理密码</label><input name="webPass" type="password" placeholder="设置复杂密码"></div>
+        </div>
+      </div></div>
+      <div class="save-bar">
+        <button type="submit" class="btn btn-pri btn-blk">保存全部配置</button>
+        <div class="res" id="saveRes"></div>
+      </div>
+    </form>
+  </section>
+
+  <!-- ③ 控制台 -->
+  <section class="tab-panel" id="tab-console">
+    <h1 class="title">控制台</h1>
+    <p class="sub">常用动作在上，调试工具收在底部折叠区</p>
+    <div class="group-label">常用动作</div>
+    <div class="card"><h3>📤 发送短信</h3><div class="body">
+      <div class="fg"><label class="l">目标号码</label><input id="smsPhone" placeholder="13800138000"></div>
+      <div class="fg"><label class="l">短信内容</label><textarea id="smsBody" placeholder="输入短信内容..." oninput="document.getElementById('smsCnt').textContent=this.value.length"></textarea>
+        <p class="hint">已输入 <span id="smsCnt">0</span> 字符</p></div>
+      <button class="btn btn-pri" onclick="sendSms()" id="smsBtn">发送短信</button>
+      <div class="res" id="smsRes"></div>
+    </div></div>
+    <div class="card"><h3>📱 eSIM 换卡</h3><div class="body">
+      <div class="brow"><button class="btn btn-pri" onclick="esimAction('info')">查询信息</button><button class="btn btn-pri" onclick="esimAction('list')">刷新配置列表</button></div>
+      <div class="res" id="esimInfoResult"></div>
+      <div id="esimProfileList" style="margin-top:10px"></div>
+      <div class="res" id="esimListResult"></div>
+    </div></div>
+    <div class="card"><h3>📶 模组</h3><div class="body">
+      <div class="brow"><button class="btn btn-sec" onclick="modemAction('signal')">信号强度</button><button class="btn btn-sec" onclick="modemAction('operator')">运营商</button><button class="btn btn-sec" onclick="modemAction('imei')">IMEI</button></div>
+      <div class="res" id="modemQueryResult"></div>
+      <div class="brow" style="margin-top:8px"><button class="btn btn-sec" onclick="modemAction('operator_auto')">自动选网</button><button class="btn btn-sec" onclick="modemAction('operator_cmcc')">移动</button><button class="btn btn-sec" onclick="modemAction('operator_cucc')">联通</button><button class="btn btn-sec" onclick="modemAction('operator_ctcc')">电信</button><button class="btn btn-sec" onclick="modemAction('operator_cb')">广电</button></div>
+      <div class="res" id="modemOperatorResult"></div>
+      <div class="brow" style="margin-top:8px"><button class="btn btn-dan" onclick="modemAction('restart')">软重启</button><button class="btn btn-dan" onclick="modemAction('hardreset')">硬重启</button></div>
+      <p class="hint">信号差、无服务时：查信号 → 重新选网 → 必要时重启</p>
+      <div class="res" id="modemRstResult"></div>
+    </div></div>
+
+    <div class="group-label">高级 / 调试</div>
+    <details class="adv"><summary>🌐 网络测试（Ping / 飞行模式 / WiFi）</summary><div class="body">
+      <div class="brow"><button class="btn btn-sec" id="pingBtn" onclick="confirmPing()">Ping 8.8.8.8</button><button class="btn btn-sec" onclick="queryFlightMode()">查飞行模式</button><button class="btn btn-dan" id="flightBtn" onclick="toggleFlightMode()">切换飞行模式</button></div>
+      <div class="brow" style="margin-top:8px"><button class="btn btn-dan" onclick="wifiRestart()">重启 WiFi</button></div>
+      <div class="res" id="pingResult"></div><div class="res" id="flightResult"></div><div class="res" id="wifiResult"></div>
+    </div></details>
+    <details class="adv"><summary>💻 AT 指令终端</summary><div class="body">
+      <div id="atLog">就绪 — 输入 AT 指令开始调试</div>
+      <div class="atbar"><input type="text" id="atCmd" placeholder="AT+CSQ"><button class="btn btn-pri btn-sm" onclick="sendAT()" id="atBtn">发送</button></div>
+      <div class="brow" style="margin-top:8px"><button class="btn btn-sec btn-sm" onclick="clearATLog()">清空日志</button></div>
+      <p class="hint">直接向模组串口发指令，请谨慎操作</p>
+    </div></details>
+    <details class="adv" id="logDetails"><summary>📋 系统日志</summary><div class="body">
+      <div id="logView">展开后每 2 秒自动刷新…</div>
+      <div class="brow" style="margin-top:8px">
+        <button class="btn btn-sec btn-sm" onclick="document.getElementById('logView').textContent=''">清空显示</button>
+        <button class="btn btn-sec btn-sm" onclick="refreshLog()">手动刷新</button>
+      </div>
+      <p class="hint">展开时才轮询 /log，收起即停。最多保留最近 120 条。</p>
+    </div></details>
+  </section>
+</div>
+
+<script>
+var PUSH_TYPES={
+  1:{name:'POST JSON',tip:'POST JSON\n{"sender":"+8613800138000","message":"...","timestamp":"2026-01-01 12:00:00"}'},
+  2:{name:'Bark (iOS)',tip:'Bark\nPOST {"title":"发送者","body":"短信内容"}'},
+  3:{name:'GET 请求',tip:'GET\nURL?sender=xxx&message=xxx&timestamp=xxx'},
+  4:{name:'钉钉机器人',tip:'钉钉\n填写 Webhook，加签需填 Secret',k1:{l:'Secret（加签密钥，可选）',ph:'SEC...'}},
+  5:{name:'PushPlus',tip:'PushPlus\n填写 Token，URL 留空用默认',k1:{l:'Token',ph:'pushplus token'},k2:{l:'发送渠道',ph:'wechat / app'}},
+  6:{name:'Server酱',tip:'Server酱\n填写 SendKey，URL 留空用默认',k1:{l:'SendKey',ph:'SCT...'}},
+  7:{name:'自定义模板',tip:'自定义\n使用 {sender} {message} {timestamp} 占位符',custom:true},
+  8:{name:'飞书机器人',tip:'飞书\n填写 Webhook，签名验证需填 Secret',k1:{l:'Secret（签名密钥，可选）',ph:'飞书签名密钥'}},
+  9:{name:'Gotify',tip:'Gotify\n服务器地址 + 应用 Token',k1:{l:'Token（应用 Token）',ph:'A...'}},
+  10:{name:'Telegram Bot',tip:'Telegram\nChat ID + Bot Token',k1:{l:'Chat ID',ph:'123456789'},k2:{l:'Bot Token',ph:'12345678:ABC...'}}
+};
+function esc(s){return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');}
+function setRes(id,msg,cls){var r=document.getElementById(id);r.className='res show '+cls;r.innerHTML=msg;}
+
+// ---- 导航 ----
+function switchTab(n){
+  document.querySelectorAll('.tab-panel').forEach(function(p){p.classList.remove('active');});
+  document.getElementById('tab-'+n).classList.add('active');
+  document.querySelectorAll('.tabs a').forEach(function(a){a.classList.toggle('active',a.dataset.tab===n);});
+  if(n!=='console') stopLogPoll();
+  window.scrollTo(0,0);
+}
+document.querySelectorAll('.tabs a').forEach(function(a){a.onclick=function(){switchTab(a.dataset.tab);};});
+
+// ---- 拉取配置并渲染 ----
+function fillAll(c){
+  var s=c.status||{};
+  document.getElementById('st-up').textContent=s.uptime||'—';
+  document.getElementById('st-heap').textContent=s.heap||'—';
+  document.getElementById('st-ip').textContent=s.ip||'—';
+  document.getElementById('st-ssid').textContent=s.ssid||'—';
+  document.getElementById('st-rssi').textContent=s.rssi||'—';
+  document.getElementById('st-modem').textContent=s.modem?'就绪':'未就绪';
+  var good=s.online&&s.modem;
+  var h=document.getElementById('health');h.classList.toggle('good',!!good);h.classList.toggle('bad',!good);
+  document.getElementById('healthText').textContent=good?'运行正常':'需要检查';
+  document.getElementById('healthSub').textContent=(s.modem?'模组就绪':'模组未就绪')+' · '+(s.online?'WiFi 已连接':'WiFi 断开');
+  renderDest(c);
+  var f=document.getElementById('cfgForm');
+  ['webUser','webPass','smtpServer','smtpPort','smtpUser','smtpPass','smtpSendTo','adminPhone','numberBlackList']
+    .forEach(function(k){ if(f[k]&&c[k]!=null) f[k].value=c[k]; });
+  var ch=c.channels||[];
+  document.getElementById('pcount').textContent=ch.filter(function(x){return x.enabled;}).length+' 个已启用';
+  renderChannels(ch);
+}
+function renderDest(c){
+  var box=document.getElementById('destList');box.innerHTML='';
+  var emailOk=c.smtpServer&&c.smtpUser&&c.smtpSendTo;
+  if(emailOk) box.appendChild(destRow('📧','邮件 SMTP',c.smtpSendTo,true));
+  var ch=c.channels||[],n=0;
+  ch.forEach(function(x,i){ if(x.enabled){n++;var t=PUSH_TYPES[x.type]||PUSH_TYPES[1];box.appendChild(destRow('📲',x.name||('通道'+(i+1)),t.name,true));} });
+  if(!emailOk&&n===0) box.innerHTML='<p class="hint" style="margin:0">尚未配置任何转发目标，短信收到后无处可发 → <span class="btn-link" onclick="switchTab(\'settings\')">去设置</span></p>';
+}
+function destRow(ic,nm,ds,on){
+  var d=document.createElement('div');d.className='dest';
+  d.innerHTML='<div class="ic">'+ic+'</div><div><div class="nm">'+esc(nm)+'</div><div class="ds">'+esc(ds)+'</div></div><div class="tag '+(on?'on':'off')+'">'+(on?'启用':'未启用')+'</div>';
+  return d;
+}
+function loadNet(){
+  setRes('netRes','查询中…（AT 慢查询，请稍候）','ld');
+  Promise.all([
+    fetch('/query?type=signal').then(function(r){return r.json();}),
+    fetch('/query?type=network').then(function(r){return r.json();})
+  ]).then(function(a){
+    var html='';
+    if(a[0]&&a[0].success) html+=a[0].message;
+    if(a[1]&&a[1].success) html+=a[1].message;
+    setRes('netRes',html||'查询失败','in');
+  }).catch(function(e){setRes('netRes','请求失败: '+e,'er');});
+}
+
+// ---- 推送通道 ----
+function renderChannels(list){var box=document.getElementById('channels');box.innerHTML='';list.forEach(function(ch,i){box.appendChild(channelEl(ch,i));});}
+function channelEl(ch,i){
+  var t=PUSH_TYPES[ch.type]||PUSH_TYPES[1];
+  var el=document.createElement('div');el.className='pch'+(ch.enabled?' on':'');el.id='pch'+i;
+  var opts=Object.keys(PUSH_TYPES).map(function(v){return '<option value="'+v+'"'+(v==ch.type?' selected':'')+'>'+PUSH_TYPES[v].name+'</option>';}).join('');
+  el.innerHTML=
+    '<div class="pch-h"><div class="sw"></div><div class="nm">'+esc(ch.name||('推送通道 '+(i+1)))+'</div><div class="badge">'+t.name+'</div></div>'+
+    '<div class="pch-b">'+
+      '<input type="hidden" name="push'+i+'en" class="en" value="'+(ch.enabled?'on':'')+'">'+
+      '<div class="fg"><label class="l">通道名称</label><input name="push'+i+'name" value="'+esc(ch.name)+'" placeholder="自定义名称" oninput="syncName('+i+',this.value)"></div>'+
+      '<div class="fg"><label class="l">推送方式</label><select name="push'+i+'type" onchange="onType('+i+',this.value)">'+opts+'</select><div class="ptip" id="tip'+i+'"></div></div>'+
+      '<div class="fg"><label class="l">推送 URL / Webhook</label><input name="push'+i+'url" value="'+esc(ch.url)+'" placeholder="http://your-server/api 或 webhook 地址"></div>'+
+      '<div class="fg" id="k1g'+i+'" style="display:none"><label class="l" id="k1l'+i+'"></label><input name="push'+i+'key1" id="k1'+i+'" value="'+esc(ch.key1)+'"></div>'+
+      '<div class="fg" id="k2g'+i+'" style="display:none"><label class="l" id="k2l'+i+'"></label><input name="push'+i+'key2" id="k2'+i+'" value="'+esc(ch.key2)+'"></div>'+
+      '<div class="fg" id="cug'+i+'" style="display:none"><label class="l">请求体模板（{sender} {message} {timestamp}）</label><textarea name="push'+i+'body" id="cu'+i+'">'+esc(ch.body)+'</textarea></div>'+
+    '</div>';
+  el.querySelector('.pch-h').onclick=function(){toggleChannel(i);};
+  setTimeout(function(){applyType(i,ch.type);},0);
+  return el;
+}
+function toggleChannel(i){var el=document.getElementById('pch'+i),on=!el.classList.contains('on');el.classList.toggle('on',on);el.querySelector('.en').value=on?'on':'';}
+function syncName(i,v){document.querySelector('#pch'+i+' .nm').textContent=v||('推送通道 '+(i+1));}
+function onType(i,v){applyType(i,parseInt(v));}
+function applyType(i,type){
+  var t=PUSH_TYPES[type]||PUSH_TYPES[1];
+  document.querySelector('#pch'+i+' .badge').textContent=t.name;
+  document.getElementById('tip'+i).textContent=t.tip;
+  var k1=document.getElementById('k1g'+i),k2=document.getElementById('k2g'+i),cu=document.getElementById('cug'+i);
+  if(t.k1){k1.style.display='';document.getElementById('k1l'+i).textContent=t.k1.l;document.getElementById('k1'+i).placeholder=t.k1.ph||'';}else k1.style.display='none';
+  if(t.k2){k2.style.display='';document.getElementById('k2l'+i).textContent=t.k2.l;document.getElementById('k2'+i).placeholder=t.k2.ph||'';}else k2.style.display='none';
+  cu.style.display=t.custom?'':'none';
+}
+
+// ---- 保存 ----
+document.getElementById('cfgForm').onsubmit=function(e){
+  e.preventDefault();
+  var body=new URLSearchParams(new FormData(this)).toString();
+  setRes('saveRes','保存中...','ld');
+  fetch('/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
+    .then(function(r){return r.text();})
+    .then(function(){setRes('saveRes','✅ 配置已保存。若改了账号密码，请用新凭据重新登录。','ok');})
+    .catch(function(e){setRes('saveRes','保存失败: '+e,'er');});
+};
+
+// ---- 发送短信 ----
+function sendSms(){
+  var p=document.getElementById('smsPhone').value.trim(),b=document.getElementById('smsBody').value.trim();
+  if(!p||!b){setRes('smsRes','请填写号码和内容','er');return;}
+  var btn=document.getElementById('smsBtn');btn.disabled=true;
+  setRes('smsRes','发送中…','ld');
+  fetch('/sendsms',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'phone='+encodeURIComponent(p)+'&content='+encodeURIComponent(b)})
+    .then(function(r){return r.json();}).then(function(d){
+      setRes('smsRes',d.message,d.success?'ok':'er');
+    }).catch(function(e){setRes('smsRes','请求失败: '+e,'er');})
+    .finally(function(){btn.disabled=false;});
+}
+
+// ---- 模组控制 ----
+function modemAction(action){
+  var names={restart:'软重启',hardreset:'硬重启',signal:'信号查询',operator:'运营商查询',imei:'IMEI查询',operator_auto:'自动选网',operator_cmcc:'注册中国移动',operator_cucc:'注册中国联通',operator_ctcc:'注册中国电信',operator_cb:'注册中国广电'};
+  var name=names[action]||action,id;
+  if(action==='restart'||action==='hardreset') id='modemRstResult';
+  else if(action.indexOf('operator_')===0) id='modemOperatorResult';
+  else id='modemQueryResult';
+  if(action==='hardreset'){
+    if(!confirm('硬重启将断电重启模组，确定继续？'))return;
+    setRes(id,'硬重启中（约10秒）...','ld');
+    fetch('/modem?action=hardreset').then(function(r){return r.json();}).then(function(d){setRes(id,d.message+' — 稍后请手动查询信号确认恢复','ok');}).catch(function(e){setRes(id,'请求失败: '+e,'er');});
+    return;
+  }
+  if(action.indexOf('operator_')===0){ if(!confirm('确定要执行 '+name+' 吗？手动选网可能需要几十秒，且可能短暂无服务。'))return; }
+  setRes(id,name+'中...','ld');
+  fetch('/modem?action='+action).then(function(r){return r.json();}).then(function(d){
+    setRes(id,(d.success?name+'成功: ':name+'失败: ')+d.message,d.success?'ok':'er');
+  }).catch(function(e){setRes(id,'请求失败: '+e,'er');});
+}
+
+// ---- eSIM ----
+function esimAction(action){
+  var id=action==='list'?'esimListResult':'esimInfoResult';
+  var nm={info:'查询eSIM信息',list:'刷新配置列表'}[action]||action;
+  setRes(id,nm+'中...','ld');
+  fetch('/esim?action='+action).then(function(r){return r.json();}).then(function(d){
+    if(!d.success){setRes(id,nm+'失败: '+d.message,'er');return;}
+    if(action==='info'){setRes(id,'<table class="info-table">'+d.message+'</table>','ok');return;}
+    // list
+    if(d.profiles&&d.profiles.length>0){
+      var h='<table class="info-table"><tr><th>ICCID</th><th>昵称</th><th>状态</th><th>操作</th></tr>';
+      d.profiles.forEach(function(p){
+        var st=p.state==1?'<span style="color:#16a34a">已启用</span>':'<span style="color:#888">已禁用</span>';
+        h+='<tr><td>'+esc(p.iccid)+'</td><td>'+esc(p.nickname||'-')+'</td><td>'+st+'</td><td>';
+        if(p.state==1) h+='<button class="btn btn-dan btn-sm" onclick="esimED(\''+p.iccid+'\',false)">禁用</button>';
+        else h+='<button class="btn btn-pri btn-sm" onclick="esimED(\''+p.iccid+'\',true)">启用</button> <button class="btn btn-dan btn-sm" onclick="esimDel(\''+p.iccid+'\')">删除</button>';
+        h+='</td></tr>';
+      });
+      h+='</table>';
+      document.getElementById('esimProfileList').innerHTML=h;
+      setRes(id,'共找到 '+d.count+' 个配置文件','ok');
+    } else { document.getElementById('esimProfileList').innerHTML='<p class="hint">未找到 eSIM 配置文件</p>'; setRes(id,'共 0 个配置文件','in'); }
+  }).catch(function(e){setRes(id,'请求失败: '+e,'er');});
+}
+function esimED(iccid,enable){
+  if(!confirm(enable?'确定启用此 eSIM 配置？':'确定禁用此 eSIM 配置？'))return;
+  fetch('/esim?action='+(enable?'switch':'disable')+'&iccid='+encodeURIComponent(iccid)).then(function(r){return r.json();}).then(function(d){alert(d.message);esimAction('list');}).catch(function(e){alert('请求失败: '+e);});
+}
+function esimDel(iccid){
+  if(!confirm('确定删除此 eSIM 配置？不可恢复！'))return;
+  fetch('/esim?action=delete&iccid='+encodeURIComponent(iccid)).then(function(r){return r.json();}).then(function(d){alert(d.message);esimAction('list');}).catch(function(e){alert('请求失败: '+e);});
+}
+
+// ---- Ping / 飞行模式 / WiFi ----
+function confirmPing(){if(confirm('确定执行 Ping 吗？将消耗少量流量。'))doPing();}
+function doPing(){
+  var b=document.getElementById('pingBtn');b.disabled=true;b.textContent='Pinging...';
+  setRes('pingResult','正在 Ping 8.8.8.8（最长 30 秒）...','ld');
+  fetch('/ping',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    b.disabled=false;b.textContent='Ping 8.8.8.8';
+    setRes('pingResult',(d.success?'Ping 成功 — ':'Ping 失败 — ')+d.message,d.success?'ok':'er');
+  }).catch(function(e){b.disabled=false;b.textContent='Ping 8.8.8.8';setRes('pingResult','请求失败: '+e,'er');});
+}
+function queryFlightMode(){
+  setRes('flightResult','查询中...','ld');
+  fetch('/flight?action=query').then(function(r){return r.json();}).then(function(d){setRes('flightResult',d.message,d.success?'in':'er');}).catch(function(e){setRes('flightResult','请求失败: '+e,'er');});
+}
+function toggleFlightMode(){
+  if(!confirm('确定切换飞行模式吗？'))return;
+  var b=document.getElementById('flightBtn');b.disabled=true;setRes('flightResult','切换中...','ld');
+  fetch('/flight?action=toggle').then(function(r){return r.json();}).then(function(d){b.disabled=false;setRes('flightResult',d.message,d.success?'ok':'er');}).catch(function(e){b.disabled=false;setRes('flightResult','请求失败: '+e,'er');});
+}
+function wifiRestart(){
+  if(!confirm('确定重启 WiFi 吗？网页将暂时不可用。'))return;
+  setRes('wifiResult','WiFi 重启中（约5秒）...','ld');
+  fetch('/wifi?action=restart').then(function(r){return r.json();}).then(function(d){setRes('wifiResult',d.message,d.success?'ok':'er');}).catch(function(e){setRes('wifiResult','请求失败: '+e,'er');});
+}
+
+// ---- AT 终端 ----
+function addLog(msg,type){
+  var log=document.getElementById('atLog'),div=document.createElement('div'),b=document.createElement('b');
+  if(type==='user'){b.style.color='#fff';b.textContent='> ';}
+  else if(type==='error'){b.style.color='#f44336';b.textContent='! ';}
+  else{b.style.color='#5eead4';b.textContent='';}
+  div.appendChild(b);div.appendChild(document.createTextNode(msg));log.appendChild(div);log.scrollTop=log.scrollHeight;
+}
+function sendAT(){
+  var inp=document.getElementById('atCmd'),cmd=inp.value.trim();if(!cmd)return;
+  var btn=document.getElementById('atBtn');btn.disabled=true;btn.textContent='...';
+  addLog(cmd,'user');inp.value='';
+  fetch('/at?cmd='+encodeURIComponent(cmd)).then(function(r){return r.json();}).then(function(d){addLog(d.message,d.success?'resp':'error');}).catch(function(e){addLog('网络错误: '+e,'error');}).finally(function(){btn.disabled=false;btn.textContent='发送';});
+}
+function clearATLog(){var l=document.getElementById('atLog');l.innerHTML='';addLog('日志已清空','resp');}
+document.getElementById('atCmd').addEventListener('keydown',function(e){if(e.key==='Enter')sendAT();});
+
+// ---- 系统日志（展开才轮询）----
+var logTimer=null;
+function startLogPoll(){if(logTimer)return;logTimer=setInterval(refreshLog,2000);}
+function stopLogPoll(){if(logTimer){clearInterval(logTimer);logTimer=null;}}
+function refreshLog(){
+  var el=document.getElementById('logView');
+  fetch('/log').then(function(r){return r.json();}).then(function(lines){
+    if(!Array.isArray(lines))return;el.textContent=lines.join('\n');el.scrollTop=el.scrollHeight;
+  }).catch(function(){});
+}
+document.getElementById('logDetails').addEventListener('toggle',function(){
+  if(this.open){refreshLog();startLogPoll();}else stopLogPoll();
+});
+
+// ---- 启动 ----
+fetch('/api/config').then(function(r){return r.json();}).then(fillAll).catch(function(e){
+  document.getElementById('healthText').textContent='无法加载配置';
+  document.getElementById('healthSub').textContent=String(e);
+});
+</script>
+</body>
+</html>

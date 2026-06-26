@@ -56,7 +56,12 @@ void setup() {
     ESP.restart();
   }
 
+  // 让 WebServer 保留条件请求头，供主页 ETag/304 判断
+  const char* collectHeaders[] = { "If-None-Match" };
+  server.collectHeaders(collectHeaders, 1);
+
   server.on("/", handleRoot);
+  server.on("/api/config", handleApiConfig);
   server.on("/save", HTTP_POST, handleSave);
   server.on("/tools", handleRoot);
   server.on("/sms", handleRoot);

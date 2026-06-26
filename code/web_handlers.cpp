@@ -72,145 +72,85 @@ bool checkAuth() {
   return true;
 }
 
-// HTML 属性/文本转义，防止配置值中的引号等破坏页面结构
-static String htmlEscape(const String& s) {
-  String r;
-  r.reserve(s.length() + 8);
-  for (unsigned int i = 0; i < s.length(); i++) {
-    char c = s.charAt(i);
-    switch (c) {
-      case '&': r += "&amp;"; break;
-      case '"': r += "&quot;"; break;
-      case '<': r += "&lt;"; break;
-      case '>': r += "&gt;"; break;
-      default: r += c;
-    }
-  }
-  return r;
-}
-
-static String pushTypeOption(int value, const char* label, PushType current) {
-  return "<option value=\"" + String(value) + "\"" +
-         (current == (PushType)value ? " selected" : "") + ">" + label + "</option>";
-}
-
-static void appendPushTypeOptions(String& html, PushType current) {
-  html += pushTypeOption(PUSH_TYPE_POST_JSON, "POST JSON（通用格式）", current);
-  html += pushTypeOption(PUSH_TYPE_BARK, "Bark（iOS推送）", current);
-  html += pushTypeOption(PUSH_TYPE_GET, "GET 请求", current);
-  html += pushTypeOption(PUSH_TYPE_DINGTALK, "钉钉机器人", current);
-  html += pushTypeOption(PUSH_TYPE_PUSHPLUS, "PushPlus", current);
-  html += pushTypeOption(PUSH_TYPE_SERVERCHAN, "Server酱", current);
-  html += pushTypeOption(PUSH_TYPE_CUSTOM, "自定义模板", current);
-  html += pushTypeOption(PUSH_TYPE_FEISHU, "飞书机器人", current);
-  html += pushTypeOption(PUSH_TYPE_GOTIFY, "Gotify", current);
-  html += pushTypeOption(PUSH_TYPE_TELEGRAM, "Telegram Bot", current);
-}
-
 static bool isValidPushType(int typeVal) {
   return typeVal >= PUSH_TYPE_POST_JSON && typeVal <= PUSH_TYPE_TELEGRAM;
 }
 
-// 处理配置页面请求
+// 页面版本号（每次编译自动变化），用作 ETag，固件更新后自动让浏览器缓存失效
+static const char PAGE_ETAG[] = "\"" __DATE__ "-" __TIME__ "\"";
+
+// 主页面：gzip 压缩的静态 HTML（~10KB，原始 ~34KB）。
+// 1) ETag + Cache-Control：刷新时浏览器发条件请求，内容未变直接回 304（空体），瞬时。
+// 2) 弱 WiFi 下用 gzip 把传输量降到 ~30%，首次/缓存失效加载也快且不易超时。
+// 3) chunked 分块发送：此 ESP32 core 一次性 send 大响应体会卡死，逐段 flush 保证完整送达。
 void handleRoot() {
   if (!checkAuth()) return;
-  
-  String html = String(htmlPage);
-  html.replace("%IP%", WiFi.localIP().toString());
-  html.replace("%WIFI_SSID%", String(WiFi.SSID()));
-  html.replace("%FREE_HEAP%", String(ESP.getFreeHeap() / 1024) + " KB");
+
+  // 条件请求：ETag 命中则 304，不重传正文
+  if (server.header("If-None-Match") == PAGE_ETAG) {
+    server.send(304, "text/plain", "");
+    return;
+  }
+
+  server.sendHeader("ETag", PAGE_ETAG);
+  server.sendHeader("Cache-Control", "no-cache");   // 缓存但每次刷新都校验（命中即 304）
+  server.sendHeader("Content-Encoding", "gzip");
+
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html", "");
+  const size_t CHUNK = 1460;
+  for (size_t i = 0; i < htmlPageGzLen; i += CHUNK) {
+    size_t n = (htmlPageGzLen - i < CHUNK) ? (htmlPageGzLen - i) : CHUNK;
+    server.sendContent(reinterpret_cast<const char*>(htmlPageGz) + i, n);
+  }
+  server.sendContent("");
+}
+
+// 配置 + 轻量状态 JSON，供前端 onload 拉取渲染。
+// 不含信号/运营商等慢 AT 查询，那些由状态页按需调 /query。
+void handleApiConfig() {
+  if (!checkAuth()) return;
+
   long uptimeSec = millis() / 1000;
   char uptimeBuf[16];
   snprintf(uptimeBuf, sizeof(uptimeBuf), "%ld:%02ld:%02ld", uptimeSec / 3600, (uptimeSec % 3600) / 60, uptimeSec % 60);
-  html.replace("%UPTIME%", String(uptimeBuf));
-  html.replace("%WEB_USER%", config.webUser);
-  html.replace("%WEB_PASS%", config.webPass);
-  html.replace("%SMTP_SERVER%", config.smtpServer);
-  html.replace("%SMTP_PORT%", String(config.smtpPort));
-  html.replace("%SMTP_USER%", config.smtpUser);
-  html.replace("%SMTP_PASS%", config.smtpPass);
-  html.replace("%SMTP_SEND_TO%", config.smtpSendTo);
-  html.replace("%ADMIN_PHONE%", config.adminPhone);
-  html.replace("%NUMBER_BLACK_LIST%", config.numberBlackList);
 
-  // 概览页面的配置状态
-  bool emailOk = config.smtpServer.length() > 0 && config.smtpUser.length() > 0 &&
-                 config.smtpPass.length() > 0 && config.smtpSendTo.length() > 0;
-  html.replace("%SMTP_CHECK%", emailOk ? "已配置" : "未配置");
-  html.replace("%MODEM_CHECK%", modemReady ? "已就绪" : "未就绪");
-  int pushCount = 0;
-  for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
-    if (config.pushChannels[i].enabled) pushCount++;
-  }
-  html.replace("%PUSH_COUNT%", String(pushCount));
-  html.replace("%MAX_PUSH_CHANNELS%", String(MAX_PUSH_CHANNELS));
-  
-  // 生成推送通道HTML
-  String channelsHtml = "";
+  String j = "{";
+  j += "\"status\":{";
+  j += "\"online\":" + String(WiFi.isConnected() ? "true" : "false") + ",";
+  j += "\"modem\":" + String(modemReady ? "true" : "false") + ",";
+  j += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
+  j += "\"ssid\":\"" + jsonEscape(String(WiFi.SSID())) + "\",";
+  j += "\"rssi\":\"" + String(WiFi.RSSI()) + " dBm\",";
+  j += "\"heap\":\"" + String(ESP.getFreeHeap() / 1024) + " KB\",";
+  j += "\"uptime\":\"" + String(uptimeBuf) + "\"";
+  j += "},";
+  j += "\"webUser\":\"" + jsonEscape(config.webUser) + "\",";
+  j += "\"webPass\":\"" + jsonEscape(config.webPass) + "\",";
+  j += "\"smtpServer\":\"" + jsonEscape(config.smtpServer) + "\",";
+  j += "\"smtpPort\":" + String(config.smtpPort) + ",";
+  j += "\"smtpUser\":\"" + jsonEscape(config.smtpUser) + "\",";
+  j += "\"smtpPass\":\"" + jsonEscape(config.smtpPass) + "\",";
+  j += "\"smtpSendTo\":\"" + jsonEscape(config.smtpSendTo) + "\",";
+  j += "\"adminPhone\":\"" + jsonEscape(config.adminPhone) + "\",";
+  j += "\"numberBlackList\":\"" + jsonEscape(config.numberBlackList) + "\",";
+  j += "\"channels\":[";
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     const PushChannel& ch = config.pushChannels[i];
-    String idx = String(i);
-    String enabledClass = ch.enabled ? " enabled" : "";
-    String checked = ch.enabled ? " checked" : "";
-    String nameEsc = htmlEscape(ch.name);
-    String urlEsc = htmlEscape(ch.url);
-    String key1Esc = htmlEscape(ch.key1);
-    String key2Esc = htmlEscape(ch.key2);
-    String bodyEsc = htmlEscape(ch.customBody);
-    
-    channelsHtml += "<div class=\"push-channel" + enabledClass + "\" id=\"channel" + idx + "\">";
-    channelsHtml += "<div class=\"push-channel-header\">";
-    channelsHtml += "<input type=\"checkbox\" name=\"push" + idx + "en\" id=\"push" + idx + "en\" onchange=\"toggleChannel(" + idx + ")\"" + checked + ">";
-    channelsHtml += "<label for=\"push" + idx + "en\" class=\"label-inline\">启用推送通道 " + String(i + 1) + "</label>";
-    channelsHtml += "</div>";
-    channelsHtml += "<div class=\"push-channel-body\">";
-    
-    // 通道名称
-    channelsHtml += "<div class=\"form-group\">";
-    channelsHtml += "<label>通道名称</label>";
-    channelsHtml += "<input type=\"text\" name=\"push" + idx + "name\" value=\"" + nameEsc + "\" placeholder=\"自定义名称\">";
-    channelsHtml += "</div>";
-    
-    // 推送类型（须与 updateTypeHint 及 PushType 枚举一致）
-    channelsHtml += "<div class=\"form-group\">";
-    channelsHtml += "<label>推送方式</label>";
-    channelsHtml += "<select name=\"push" + idx + "type\" id=\"push" + idx + "type\" onchange=\"updateTypeHint(" + idx + ")\">";
-    appendPushTypeOptions(channelsHtml, ch.type);
-    channelsHtml += "</select>";
-    channelsHtml += "<div class=\"push-type-hint\" id=\"hint" + idx + "\"></div>";
-    channelsHtml += "</div>";
-    
-    // URL
-    channelsHtml += "<div class=\"form-group\">";
-    channelsHtml += "<label>推送URL/Webhook</label>";
-    channelsHtml += "<input type=\"text\" name=\"push" + idx + "url\" value=\"" + urlEsc + "\" placeholder=\"http://your-server.com/api 或 webhook地址\">";
-    channelsHtml += "</div>";
-    
-    // 额外参数区域（钉钉/PushPlus/Server酱等需要）
-    channelsHtml += "<div id=\"extra" + idx + "\" style=\"display:none;\">";
-    channelsHtml += "<div class=\"form-group\">";
-    channelsHtml += "<label id=\"key1label" + idx + "\">参数1</label>";
-    channelsHtml += "<input type=\"text\" name=\"push" + idx + "key1\" id=\"key1" + idx + "\" value=\"" + key1Esc + "\">";
-    channelsHtml += "</div>";
-    channelsHtml += "<div class=\"form-group\" id=\"key2group" + idx + "\">";
-    channelsHtml += "<label id=\"key2label" + idx + "\">参数2</label>";
-    channelsHtml += "<input type=\"text\" name=\"push" + idx + "key2\" id=\"key2" + idx + "\" value=\"" + key2Esc + "\">";
-    channelsHtml += "</div>";
-    channelsHtml += "</div>";
-    
-    // 自定义模板区域
-    channelsHtml += "<div id=\"custom" + idx + "\" style=\"display:none;\">";
-    channelsHtml += "<div class=\"form-group\">";
-    channelsHtml += "<label>请求体模板（使用 {sender} {message} {timestamp} 占位符）</label>";
-    channelsHtml += "<textarea name=\"push" + idx + "body\" rows=\"4\" style=\"width:100%;font-family:monospace;\">" + bodyEsc + "</textarea>";
-    channelsHtml += "</div>";
-    channelsHtml += "</div>";
-    
-    channelsHtml += "</div></div>";
+    if (i) j += ",";
+    j += "{";
+    j += "\"enabled\":" + String(ch.enabled ? "true" : "false") + ",";
+    j += "\"type\":" + String((int)ch.type) + ",";
+    j += "\"name\":\"" + jsonEscape(ch.name) + "\",";
+    j += "\"url\":\"" + jsonEscape(ch.url) + "\",";
+    j += "\"key1\":\"" + jsonEscape(ch.key1) + "\",";
+    j += "\"key2\":\"" + jsonEscape(ch.key2) + "\",";
+    j += "\"body\":\"" + jsonEscape(ch.customBody) + "\"";
+    j += "}";
   }
-  html.replace("%PUSH_CHANNELS%", channelsHtml);
-  
-  server.send(200, "text/html", html);
+  j += "]}";
+
+  server.send(200, "application/json", j);
 }
 
 // 处理工具箱页面请求 — 已整合到主页，直接返回主页
@@ -673,35 +613,12 @@ void handleSendSms() {
     success = sendSMS(phone.c_str(), content.c_str());
     resultMsg = success ? "短信发送成功！" : "短信发送失败，请检查模组状态";
   }
-  
-  String html = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="3;url=/sms">
-  <title>发送结果</title>
-  <style>
-    body { font-family: Arial, sans-serif; text-align: center; padding-top: 100px; background: #f5f5f5; }
-    .result { padding: 20px; border-radius: 10px; display: inline-block; }
-    .success { background: #4CAF50; color: white; }
-    .error { background: #f44336; color: white; }
-  </style>
-</head>
-<body>
-  <div class="result %CLASS%">
-    <h2>%ICON% %MSG%</h2>
-    <p>3秒后返回发送页面...</p>
-  </div>
-</body>
-</html>
-)rawliteral";
-  
-  html.replace("%CLASS%", success ? "success" : "error");
-  html.replace("%ICON%", success ? "✅" : "❌");
-  html.replace("%MSG%", resultMsg);
-  
-  server.send(200, "text/html", html);
+
+  String json = "{";
+  json += "\"success\":" + String(success ? "true" : "false") + ",";
+  json += "\"message\":\"" + jsonEscape(resultMsg) + "\"";
+  json += "}";
+  server.send(200, "application/json", json);
 }
 
 // 处理Ping请求

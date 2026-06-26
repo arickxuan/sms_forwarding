@@ -17,6 +17,7 @@ void logCaptureLn(const char* msg);
 
 bool checkAuth();
 void handleRoot();
+void handleApiConfig();
 void handleToolsPage();
 void handleSave();
 void handleQuery();
