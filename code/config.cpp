@@ -1,5 +1,6 @@
 #include "config.h"
 #include "web_handlers.h"
+#include "wifi_config.h"
 
 // 保存配置到NVS
 void saveConfig() {
@@ -10,9 +11,13 @@ void saveConfig() {
   preferences.putString("smtpPass", config.smtpPass);
   preferences.putString("smtpSendTo", config.smtpSendTo);
   preferences.putString("adminPhone", config.adminPhone);
+  preferences.putString("smsFbPhone", config.smsFallbackPhone);
+  preferences.putString("wifiSsid", config.wifiSsid);
+  preferences.putString("wifiPass", config.wifiPass);
   preferences.putString("webUser", config.webUser);
   preferences.putString("webPass", config.webPass);
   preferences.putString("numBlkList", config.numberBlackList);
+  preferences.putBool("ledEnabled", config.ledEnabled);
   
   // 保存推送通道配置
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
@@ -39,9 +44,13 @@ void loadConfig() {
   config.smtpPass = preferences.getString("smtpPass", "");
   config.smtpSendTo = preferences.getString("smtpSendTo", "");
   config.adminPhone = preferences.getString("adminPhone", "");
+  config.smsFallbackPhone = preferences.getString("smsFbPhone", "");
+  config.wifiSsid = preferences.getString("wifiSsid", WIFI_SSID);
+  config.wifiPass = preferences.getString("wifiPass", WIFI_PASS);
   config.webUser = preferences.getString("webUser", DEFAULT_WEB_USER);
   config.webPass = preferences.getString("webPass", DEFAULT_WEB_PASS);
   config.numberBlackList = preferences.getString("numBlkList", "");
+  config.ledEnabled = preferences.getBool("ledEnabled", true);
   
   // 加载推送通道配置
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
@@ -117,5 +126,8 @@ bool isConfigValid() {
 
 // 获取当前设备URL
 String getDeviceUrl() {
+  if (provisioningMode) {
+    return "http://" + WiFi.softAPIP().toString() + "/";
+  }
   return "http://" + WiFi.localIP().toString() + "/";
 }

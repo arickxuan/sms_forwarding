@@ -1,5 +1,22 @@
 #include "modem.h"
 #include "web_handlers.h"
+#include <esp_task_wdt.h>
+
+static void serviceLongOperation() {
+  esp_task_wdt_reset();
+  if (provisioningMode) {
+    dnsServer.processNextRequest();
+  }
+  server.handleClient();
+}
+
+static void serviceDelay(unsigned long ms) {
+  unsigned long start = millis();
+  while (millis() - start < ms) {
+    serviceLongOperation();
+    delay(10);
+  }
+}
 
 // 发送AT命令并获取响应
 String sendATCommand(const char* cmd, unsigned long timeout) {
@@ -13,16 +30,17 @@ String sendATCommand(const char* cmd, unsigned long timeout) {
       char c = Serial1.read();
       resp += c;
       if (resp.indexOf("OK") >= 0 || resp.indexOf("ERROR") >= 0) {
+        modemReady = true;
         // 读取剩余数据（最多 50ms）
         unsigned long t = millis();
         while (millis() - t < 50) {
           if (Serial1.available()) resp += (char)Serial1.read();
-          server.handleClient();
+          serviceLongOperation();
         }
         return resp;
       }
     }
-    server.handleClient();
+    serviceLongOperation();
   }
   return resp;
 }
@@ -33,11 +51,11 @@ void modemPowerCycle() {
 
   logCaptureLn(String("EN 拉低：关闭模组"));
   digitalWrite(MODEM_EN_PIN, LOW);
-  delay(1200);  // 关机时间给够
+  serviceDelay(1200);  // 关机时间给够
 
   logCaptureLn(String("EN 拉高：开启模组"));
   digitalWrite(MODEM_EN_PIN, HIGH);
-  delay(6000);  // 等模组完全启动再发AT（关键）
+  serviceDelay(6000);  // 等模组完全启动再发AT（关键）
 }
 
 // 重启模组（EN引脚断电重启 + 重新初始化）
@@ -57,6 +75,7 @@ void modemInit() {
     blink_short();
   }
   logCaptureLn(String("模组AT响应正常"));
+  modemReady = true;
 
   //判断型号，做一些特定操作
   bool need_set_CGACT = true;
@@ -89,11 +108,17 @@ void modemInit() {
   }
 
   if(need_set_CGACT) {
-    while (!sendATandWaitOK("AT+CGACT=0,1", 5000)) {
+    int cgactRetry = 0;
+    while (!sendATandWaitOK("AT+CGACT=0,1", 5000) && cgactRetry < 5) {
+      cgactRetry++;
       logCaptureLn(String("设置CGACT失败，重试..."));
       blink_short();
     }
-    logCaptureLn(String("已禁用数据连接(AT+CGACT=0,1)，防止流量消耗"));
+    if (cgactRetry < 5) {
+      logCaptureLn(String("已禁用数据连接(AT+CGACT=0,1)，防止流量消耗"));
+    } else {
+      logCaptureLn(String("CGACT连续失败，跳过数据连接关闭命令，继续初始化模组"));
+    }
   } else {
     logCaptureLn(String("该型号无法配置(AT+CGACT=0,1)，跳过该命令，会不会消耗流量？自求多福"));
   }
@@ -117,16 +142,20 @@ void modemInit() {
     logCaptureLn(String("网络已注册"));
     modemReady = true;
   } else {
-    logCaptureLn(String("⚠️ 网络注册超时（无SIM卡或信号差），模组功能不可用"));
-    modemReady = false;
+    logCaptureLn(String("⚠️ 网络注册超时（无SIM卡或信号差），短信/数据可能不可用"));
   }
 }
 
 void blink_short(unsigned long gap_time) {
+  if (!config.ledEnabled) {
+    digitalWrite(LED_BUILTIN, HIGH);
+    serviceDelay(gap_time);
+    return;
+  }
   digitalWrite(LED_BUILTIN, LOW);
-  delay(50);
+  serviceDelay(50);
   digitalWrite(LED_BUILTIN, HIGH);
-  delay(gap_time);
+  serviceDelay(gap_time);
 }
 
 bool sendATandWaitOK(const char* cmd, unsigned long timeout) {
@@ -138,10 +167,16 @@ bool sendATandWaitOK(const char* cmd, unsigned long timeout) {
     if (Serial1.available()) {
       char c = Serial1.read();
       resp += c;
-      if (resp.indexOf("OK") >= 0) return true;
-      if (resp.indexOf("ERROR") >= 0) return false;
+      if (resp.indexOf("OK") >= 0) {
+        modemReady = true;
+        return true;
+      }
+      if (resp.indexOf("ERROR") >= 0) {
+        modemReady = true;
+        return false;
+      }
     }
-    server.handleClient();
+    serviceLongOperation();
   }
   return false;
 }
@@ -157,12 +192,13 @@ bool waitCEREG() {
       char c = Serial1.read();
       resp += c;
       if (resp.indexOf("+CEREG:") >= 0) {
+        modemReady = true;
         if (resp.indexOf(",1") >= 0 || resp.indexOf(",5") >= 0) return true;
         if (resp.indexOf(",0") >= 0 || resp.indexOf(",2") >= 0 || 
             resp.indexOf(",3") >= 0 || resp.indexOf(",4") >= 0) return false;
       }
     }
-    server.handleClient();
+    serviceLongOperation();
   }
   return false;
 }
@@ -205,7 +241,7 @@ bool sendSMS(const char* phoneNumber, const char* message) {
         break;
       }
     }
-    server.handleClient();
+    serviceLongOperation();
   }
   
   if (!gotPrompt) {
@@ -234,7 +270,7 @@ bool sendSMS(const char* phoneNumber, const char* message) {
         return false;
       }
     }
-    server.handleClient();
+    serviceLongOperation();
   }
   logCaptureLn(String("短信发送超时"));
   return false;

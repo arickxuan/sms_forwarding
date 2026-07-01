@@ -1,9 +1,79 @@
 #include "sms_process.h"
 #include "web_handlers.h"
 #include "modem.h"
+#include "config.h"
 #include "web_handlers.h"
 #include "push.h"
 #include "web_handlers.h"
+
+static String truncateUtf8Chars(const String& input, int maxChars) {
+  String out = "";
+  int chars = 0;
+  for (unsigned int i = 0; i < input.length() && chars < maxChars; ) {
+    uint8_t c = (uint8_t)input[i];
+    int n = 1;
+    if ((c & 0xE0) == 0xC0) n = 2;
+    else if ((c & 0xF0) == 0xE0) n = 3;
+    else if ((c & 0xF8) == 0xF0) n = 4;
+    if (i + n > input.length()) break;
+    out += input.substring(i, i + n);
+    i += n;
+    chars++;
+  }
+  if (out.length() < input.length()) out += "...";
+  return out;
+}
+
+static bool hasNetworkDeliveryConfigured() {
+  if (config.smtpServer.length() > 0 && config.smtpUser.length() > 0 &&
+      config.smtpPass.length() > 0 && config.smtpSendTo.length() > 0) {
+    return true;
+  }
+  for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
+    if (isPushChannelValid(config.pushChannels[i])) return true;
+  }
+  return false;
+}
+
+static String buildFallbackSms(const char* sender, const char* text) {
+  String msg = "[";
+  msg += sender;
+  msg += "] ";
+  msg += text;
+  return truncateUtf8Chars(msg, 67);
+}
+
+static String queryAtLine(const char* cmd, unsigned long timeout, const char* marker) {
+  String resp = sendATCommand(cmd, timeout);
+  int idx = resp.indexOf(marker);
+  if (idx < 0) return "";
+  int end = resp.indexOf('\n', idx);
+  String line = end >= 0 ? resp.substring(idx, end) : resp.substring(idx);
+  line.trim();
+  return line;
+}
+
+static String buildStatusReply() {
+  String csq = queryAtLine("AT+CSQ", 2000, "+CSQ:");
+  String cereg = queryAtLine("AT+CEREG?", 2000, "+CEREG:");
+  String msg = "设备状态 / WiFi:";
+  msg += WiFi.isConnected() ? "已连" : "未连";
+  if (WiFi.isConnected()) {
+    msg += " / IP:";
+    msg += WiFi.localIP().toString();
+  }
+  if (csq.length() > 0) {
+    msg += " / 信号:";
+    msg += csq;
+  }
+  if (cereg.length() > 0) {
+    msg += " / 4G:";
+    msg += cereg;
+  }
+  msg += " / 时间:";
+  msg += timeSynced ? "已同步" : "未同步";
+  return truncateUtf8Chars(msg, 67);
+}
 
 // 初始化长短信缓存
 void initConcatBuffer() {
@@ -256,6 +326,52 @@ void processAdminCommand(const char* sender, const char* text) {
     delay(1000);
     ESP.restart();
   }
+  else if (cmd.equalsIgnoreCase("PING") || cmd.equalsIgnoreCase("/PING")) {
+    logCaptureLn(String("执行PING命令，短信回执设备状态"));
+    String reply = buildStatusReply();
+    bool sent = sendSMS(sender, reply.c_str());
+    logCaptureLn(sent ? String("PING状态回执成功") : String("PING状态回执失败"));
+  }
+  else if (cmd.startsWith("WIFI:")) {
+    int firstColon = cmd.indexOf(':');
+    int secondColon = cmd.indexOf(':', firstColon + 1);
+    if (secondColon <= firstColon) {
+      sendSMS(sender, "WiFi配网失败: 格式 WIFI:名称:密码");
+      return;
+    }
+    String ssid = cmd.substring(firstColon + 1, secondColon);
+    String pass = cmd.substring(secondColon + 1);
+    ssid.trim();
+    if (ssid.length() == 0) {
+      sendSMS(sender, "WiFi配网失败: SSID为空");
+      return;
+    }
+    logCaptureLn(String("管理员短信请求切换WiFi: ") + ssid);
+    bool wasProvisioning = provisioningMode;
+    String oldSsid = config.wifiSsid;
+    String oldPass = config.wifiPass;
+    config.wifiSsid = ssid;
+    config.wifiPass = pass;
+    bool ok = connectConfiguredWiFi(20000);
+    if (ok) {
+      saveConfig();
+      String reply = "WiFi切换成功 / IP:" + WiFi.localIP().toString();
+      sendSMS(sender, truncateUtf8Chars(reply, 67).c_str());
+      if (wasProvisioning) {
+        delay(1000);
+        ESP.restart();
+      }
+    } else {
+      config.wifiSsid = oldSsid;
+      config.wifiPass = oldPass;
+      if (wasProvisioning) {
+        startProvisioningAP();
+      } else {
+        connectConfiguredWiFi(10000);
+      }
+      sendSMS(sender, "WiFi切换失败，已回滚旧配置");
+    }
+  }
   else {
     logCaptureLn(String("未知命令: " + cmd));
   }
@@ -282,19 +398,30 @@ void processSmsContent(const char* sender, const char* text, const char* timesta
     smsText.trim();
     
     // 检查是否为命令格式
-    if (smsText.startsWith("SMS:") || smsText.equals("RESET")) {
+    if (smsText.startsWith("SMS:") || smsText.startsWith("WIFI:") ||
+        smsText.equals("RESET") || smsText.equalsIgnoreCase("PING") ||
+        smsText.equalsIgnoreCase("/PING")) {
       processAdminCommand(sender, text);
       // 命令已处理，不再发送普通通知邮件
       return;
     }
   }
 
+  bool networkConfigured = hasNetworkDeliveryConfigured();
+  bool delivered = false;
   // 发送通知http（推送到所有启用的通道）
-  sendSMSToServer(sender, text, timestamp);
+  delivered = sendSMSToServer(sender, text, timestamp) || delivered;
   // 发送通知邮件
   String subject = ""; subject+="短信";subject+=sender;subject+=",";subject+=text;
   String body = ""; body+="来自：";body+=sender;body+="，时间：";body+=timestamp;body+="，内容：";body+=text;
-  sendEmailNotification(subject.c_str(), body.c_str());
+  delivered = sendEmailNotification(subject.c_str(), body.c_str()) || delivered;
+
+  if (networkConfigured && !delivered && config.smsFallbackPhone.length() > 0) {
+    logCaptureLn(String("网络通道全部失败，触发短信兜底"));
+    String fallback = buildFallbackSms(sender, text);
+    bool sent = sendSMS(config.smsFallbackPhone.c_str(), fallback.c_str());
+    logCaptureLn(sent ? String("[兜底短信] 发送成功") : String("[兜底短信] 发送失败"));
+  }
 }
 
 static void handlePduLine(const String& line) {

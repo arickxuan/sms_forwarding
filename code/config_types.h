@@ -40,10 +40,14 @@ struct Config {
   String smtpPass;
   String smtpSendTo;
   String adminPhone;
+  String smsFallbackPhone;
+  String wifiSsid;
+  String wifiPass;
   PushChannel pushChannels[MAX_PUSH_CHANNELS];  // 多推送通道
   String webUser;      // Web管理账号
   String webPass;      // Web管理密码
   String numberBlackList;  // 号码黑名单（换行符分隔）
+  bool ledEnabled;     // 是否启用板载状态灯
 };
 
 // 默认Web管理账号密码

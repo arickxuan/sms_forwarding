@@ -167,9 +167,18 @@
         <div id="channels"></div>
       </div></div>
       <div class="group-label">系统</div>
+      <div class="card"><h3>📶 WiFi 设置</h3><div class="body">
+        <div class="row">
+          <div class="fg"><label class="l">WiFi SSID</label><input name="wifiSsid" placeholder="你的 WiFi 名称"></div>
+          <div class="fg"><label class="l">WiFi 密码</label><input name="wifiPass" type="password" placeholder="可留空"></div>
+        </div>
+        <p class="hint">保存后设备会重启并连接新 WiFi；开机连续失败会进入 SMS-Setup-XXXX 应急配网热点，密码 12345678。</p>
+      </div></div>
       <div class="card"><h3>👤 管理员 &amp; 黑名单</h3><div class="body">
         <div class="fg"><label class="l">管理员手机号</label><input name="adminPhone" placeholder="13800138000">
-          <p class="hint">此号码可发短信远程指令（SMS:号码:内容 发短信、RESET 重启）</p></div>
+          <p class="hint">此号码可发短信远程指令：SMS:号码:内容、WIFI:名称:密码、PING、RESET</p></div>
+        <div class="fg"><label class="l">短信兜底接收号</label><input name="smsFallbackPhone" placeholder="+8613800138000">
+          <p class="hint">网络推送和邮件全部失败时，用设备 SIM 卡直接发一条短信到此号码；留空关闭。</p></div>
         <div class="fg"><label class="l">号码黑名单</label><textarea name="numberBlackList" rows="3" placeholder="每行一个号码"></textarea>
           <p class="hint">黑名单号码发来的短信将被忽略</p></div>
       </div></div>
@@ -179,6 +188,11 @@
           <div class="fg"><label class="l">管理账号</label><input name="webUser" placeholder="admin"></div>
           <div class="fg"><label class="l">管理密码</label><input name="webPass" type="password" placeholder="设置复杂密码"></div>
         </div>
+      </div></div>
+      <div class="card"><h3>💡 状态灯</h3><div class="body">
+        <input type="hidden" name="ledConfigPresent" value="1">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" name="ledEnabled" style="width:auto">启用 ESP32 板载状态灯</label>
+        <p class="hint">关闭后，启动等待和重试过程不再闪烁，启动完成后保持熄灭；不影响 4G 模组自己的网络信号灯。</p>
       </div></div>
       <div class="save-bar">
         <button type="submit" class="btn btn-pri btn-blk">保存全部配置</button>
@@ -279,8 +293,9 @@ function fillAll(c){
   document.getElementById('healthSub').textContent=(s.modem?'模组就绪':'模组未就绪')+' · '+(s.online?'WiFi 已连接':'WiFi 断开');
   renderDest(c);
   var f=document.getElementById('cfgForm');
-  ['webUser','webPass','smtpServer','smtpPort','smtpUser','smtpPass','smtpSendTo','adminPhone','numberBlackList']
+  ['webUser','webPass','smtpServer','smtpPort','smtpUser','smtpPass','smtpSendTo','adminPhone','smsFallbackPhone','wifiSsid','wifiPass','numberBlackList']
     .forEach(function(k){ if(f[k]&&c[k]!=null) f[k].value=c[k]; });
+  if(f.ledEnabled) f.ledEnabled.checked = c.ledEnabled !== false;
   var ch=c.channels||[];
   document.getElementById('pcount').textContent=ch.filter(function(x){return x.enabled;}).length+' 个已启用';
   renderChannels(ch);

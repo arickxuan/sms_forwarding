@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <WebServer.h>
+#include <DNSServer.h>
 #include <Preferences.h>
 #include <pdulib.h>
 #define ENABLE_SMTP
@@ -32,9 +33,11 @@ extern PDU pdu;
 extern WiFiClientSecure ssl_client;
 extern SMTPClient smtp;
 extern WebServer server;
+extern DNSServer dnsServer;
 extern bool configValid;
 extern bool timeSynced;
 extern bool modemReady;
+extern bool provisioningMode;
 extern unsigned long lastPrintTime;
 extern ConcatSms concatBuffer[MAX_CONCAT_MESSAGES];
 

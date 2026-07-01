@@ -76,6 +76,88 @@ static bool isValidPushType(int typeVal) {
   return typeVal >= PUSH_TYPE_POST_JSON && typeVal <= PUSH_TYPE_TELEGRAM;
 }
 
+bool connectConfiguredWiFi(unsigned long timeoutMs) {
+  if (config.wifiSsid.length() == 0) {
+    logCaptureLn(String("WiFi SSID为空，跳过连接"));
+    return false;
+  }
+  provisioningMode = false;
+  dnsServer.stop();
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(false);
+  delay(100);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.setScanMethod(WIFI_FAST_SCAN);
+  WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
+  WiFi.begin(config.wifiSsid.c_str(), config.wifiPass.c_str());
+  logCaptureLn(String("连接WiFi: ") + config.wifiSsid);
+
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
+    blink_short(200);
+    server.handleClient();
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    logCaptureLn(String("WiFi已连接, IP: ") + WiFi.localIP().toString());
+    logCaptureLn(String("信号强度(RSSI): ") + String(WiFi.RSSI()) + " dBm");
+    return true;
+  }
+  logCaptureLn(String("WiFi连接失败: ") + config.wifiSsid);
+  return false;
+}
+
+static String provisioningSsid() {
+  uint32_t chip = (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
+  char buf[24];
+  snprintf(buf, sizeof(buf), "SMS-Setup-%04X", chip);
+  return String(buf);
+}
+
+void startProvisioningAP() {
+  provisioningMode = true;
+  WiFi.mode(WIFI_AP);
+  IPAddress apIP(192, 168, 4, 1);
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+  String ssid = provisioningSsid();
+  WiFi.softAP(ssid.c_str(), "12345678");
+  dnsServer.start(53, "*", apIP);
+  logCaptureLn(String("进入AP应急配网模式: ") + ssid + " / http://192.168.4.1");
+}
+
+void handleWifiSetup() {
+  if (!provisioningMode && !checkAuth()) return;
+  String html = R"rawliteral(
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WiFi 配网</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#f4f4f5;margin:0;padding:24px;color:#171717}.box{max-width:420px;margin:40px auto;background:#fff;border-radius:8px;padding:22px;box-shadow:0 1px 3px #0002}label{display:block;font-size:13px;margin:14px 0 5px}input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:6px;font-size:15px}button{width:100%;margin-top:18px;padding:12px;border:0;border-radius:999px;background:#111;color:#fff;font-size:15px}.hint{font-size:12px;color:#666;line-height:1.5}</style></head>
+<body><div class="box"><h2>WiFi 配网</h2><p class="hint">保存后设备会重启并连接新 WiFi。热点密码固定为 12345678。</p>
+<form method="POST" action="/wifisave"><label>SSID</label><input name="wifiSsid" value="%SSID%" required><label>密码</label><input name="wifiPass" type="password" value="%PASS%"><button type="submit">保存并重启</button></form></div></body></html>
+)rawliteral";
+  html.replace("%SSID%", config.wifiSsid);
+  html.replace("%PASS%", config.wifiPass);
+  server.send(200, "text/html", html);
+}
+
+void handleWifiSave() {
+  if (!provisioningMode && !checkAuth()) return;
+  if (server.hasArg("wifiSsid")) config.wifiSsid = server.arg("wifiSsid");
+  if (server.hasArg("wifiPass")) config.wifiPass = server.arg("wifiPass");
+  saveConfig();
+  server.send(200, "text/html", "<meta charset='UTF-8'><p>WiFi 已保存，设备正在重启...</p>");
+  delay(500);
+  ESP.restart();
+}
+
+void handleNotFound() {
+  if (provisioningMode) {
+    server.sendHeader("Location", "/wifi", true);
+    server.send(302, "text/plain", "");
+    return;
+  }
+  server.send(404, "text/plain", "Not found");
+}
+
 // 页面版本号（每次编译自动变化），用作 ETag，固件更新后自动让浏览器缓存失效
 static const char PAGE_ETAG[] = "\"" __DATE__ "-" __TIME__ "\"";
 
@@ -84,6 +166,10 @@ static const char PAGE_ETAG[] = "\"" __DATE__ "-" __TIME__ "\"";
 // 2) 弱 WiFi 下用 gzip 把传输量降到 ~30%，首次/缓存失效加载也快且不易超时。
 // 3) chunked 分块发送：此 ESP32 core 一次性 send 大响应体会卡死，逐段 flush 保证完整送达。
 void handleRoot() {
+  if (provisioningMode) {
+    handleWifiSetup();
+    return;
+  }
   if (!checkAuth()) return;
 
   // 条件请求：ETag 命中则 304，不重传正文
@@ -133,7 +219,11 @@ void handleApiConfig() {
   j += "\"smtpPass\":\"" + jsonEscape(config.smtpPass) + "\",";
   j += "\"smtpSendTo\":\"" + jsonEscape(config.smtpSendTo) + "\",";
   j += "\"adminPhone\":\"" + jsonEscape(config.adminPhone) + "\",";
+  j += "\"smsFallbackPhone\":\"" + jsonEscape(config.smsFallbackPhone) + "\",";
+  j += "\"wifiSsid\":\"" + jsonEscape(config.wifiSsid) + "\",";
+  j += "\"wifiPass\":\"" + jsonEscape(config.wifiPass) + "\",";
   j += "\"numberBlackList\":\"" + jsonEscape(config.numberBlackList) + "\",";
+  j += "\"ledEnabled\":" + String(config.ledEnabled ? "true" : "false") + ",";
   j += "\"channels\":[";
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     const PushChannel& ch = config.pushChannels[i];
@@ -837,8 +927,24 @@ void handleSave() {
   if (server.hasArg("adminPhone")) {
     config.adminPhone = server.arg("adminPhone");
   }
+  if (server.hasArg("smsFallbackPhone")) {
+    config.smsFallbackPhone = server.arg("smsFallbackPhone");
+  }
   if (server.hasArg("numberBlackList")) {
     config.numberBlackList = server.arg("numberBlackList");
+  }
+  if (server.hasArg("ledConfigPresent")) {
+    config.ledEnabled = server.hasArg("ledEnabled");
+    digitalWrite(LED_BUILTIN, config.ledEnabled ? LOW : HIGH);
+  }
+  bool wifiChanged = false;
+  if (server.hasArg("wifiSsid") && server.arg("wifiSsid") != config.wifiSsid) {
+    config.wifiSsid = server.arg("wifiSsid");
+    wifiChanged = true;
+  }
+  if (server.hasArg("wifiPass") && server.arg("wifiPass") != config.wifiPass) {
+    config.wifiPass = server.arg("wifiPass");
+    wifiChanged = true;
   }
 
   // 推送通道配置：只在对应通道的字段存在时更新
@@ -898,6 +1004,12 @@ void handleSave() {
 </html>
 )rawliteral";
   server.send(200, "text/html", html);
+
+  if (wifiChanged) {
+    logCaptureLn(String("WiFi配置已更新，设备即将重启并连接新网络"));
+    delay(800);
+    ESP.restart();
+  }
   
   // 如果配置有效，发送启动通知
   if (configValid) {
@@ -1074,6 +1186,10 @@ void handleModem() {
 
 // WiFi 重启
 void handleWifi() {
+  if (provisioningMode) {
+    handleWifiSetup();
+    return;
+  }
   if (!checkAuth()) return;
 
   static bool busy = false;
@@ -1087,21 +1203,7 @@ void handleWifi() {
   if (action == "restart") {
     logCaptureLn(String("网页端请求重启WiFi..."));
     server.send(200, "application/json", "{\"success\":true,\"message\":\"WiFi 正在重启，请等待约 5 秒后刷新页面\"}");
-    WiFi.disconnect(true);
-    delay(500);
-    WiFi.setSleep(false);
-    WiFi.setAutoReconnect(true);
-    WiFi.setScanMethod(WIFI_FAST_SCAN);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    logCaptureLn(String("正在重新连接WiFi: " + String(WIFI_SSID)));
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
-      delay(50);
-      server.handleClient();
-    }
-    if (WiFi.status() == WL_CONNECTED) {
-      logCaptureLn(String("WiFi 重连成功, IP: " + WiFi.localIP().toString()));
-    } else {
+    if (!connectConfiguredWiFi(15000)) {
       logCaptureLn(String("WiFi 重连失败，将在后台持续尝试"));
     }
   } else {

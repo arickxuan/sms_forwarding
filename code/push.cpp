@@ -8,11 +8,11 @@
 #include <sys/time.h>
 
 // 发送邮件通知函数
-void sendEmailNotification(const char* subject, const char* body) {
+bool sendEmailNotification(const char* subject, const char* body) {
   if (config.smtpServer.length() == 0 || config.smtpUser.length() == 0 ||
       config.smtpPass.length() == 0 || config.smtpSendTo.length() == 0) {
     logCaptureLn(String("邮件配置不完整，跳过发送"));
-    return;
+    return false;
   }
 
   auto statusCallback = [](SMTPStatus status) {
@@ -31,10 +31,12 @@ void sendEmailNotification(const char* subject, const char* body) {
     msg.headers.add(rfc822_subject, subject);
     msg.text.body(body);
     msg.timestamp = time(nullptr);
-    smtp.send(msg);
-    logCaptureLn(String("邮件发送完成"));
+    bool ok = smtp.send(msg);
+    logCaptureLn(ok ? String("邮件发送完成") : String("邮件发送失败"));
+    return ok;
   } else {
     logCaptureLn(String("邮件服务器连接失败"));
+    return false;
   }
 }
 
@@ -93,16 +95,17 @@ String jsonEscape(const String& str) {
 }
 
 // 发送单个推送通道
-void sendToChannel(const PushChannel& channel, const char* sender, const char* message, const char* timestamp) {
-  if (!channel.enabled) return;
+bool sendToChannel(const PushChannel& channel, const char* sender, const char* message, const char* timestamp) {
+  if (!channel.enabled) return false;
 
   // 对于某些推送方式，URL可以为空（使用默认URL）
   bool needUrl = (channel.type == PUSH_TYPE_POST_JSON || channel.type == PUSH_TYPE_BARK ||
                   channel.type == PUSH_TYPE_GET || channel.type == PUSH_TYPE_DINGTALK ||
                   channel.type == PUSH_TYPE_CUSTOM);
-  if (needUrl && channel.url.length() == 0) return;
+  if (needUrl && channel.url.length() == 0) return false;
 
   HTTPClient http;
+  http.setTimeout(8000);
   String channelName = channel.name.length() > 0 ? channel.name : ("通道" + String(channel.type));
   logCaptureLn(String("发送到推送通道: " + channelName));
 
@@ -175,7 +178,7 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
       // 自定义模板
       if (channel.customBody.length() == 0) {
         logCaptureLn(String("自定义模板为空，跳过"));
-        return;
+        return false;
       }
       http.begin(channel.url);
       http.addHeader("Content-Type", "application/json");
@@ -239,12 +242,14 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
 
     default:
       logCaptureLn(String("未知推送类型"));
-      return;
+      return false;
   }
 
+  bool ok = false;
   if (httpCode > 0) {
     logCaptureF("[%s] 响应码: %d\n", channelName.c_str(), httpCode);
-    if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
+    ok = httpCode >= 200 && httpCode < 300;
+    if (ok) {
       String response = http.getString();
       logCaptureLn(String("响应: " + response));
     }
@@ -252,13 +257,14 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
     logCaptureF("[%s] HTTP请求失败: %s\n", channelName.c_str(), http.errorToString(httpCode).c_str());
   }
   http.end();
+  return ok;
 }
 
 // 发送短信到所有启用的推送通道
-void sendSMSToServer(const char* sender, const char* message, const char* timestamp) {
+bool sendSMSToServer(const char* sender, const char* message, const char* timestamp) {
   if (WiFi.status() != WL_CONNECTED) {
     logCaptureLn(String("WiFi未连接，跳过推送"));
-    return;
+    return false;
   }
 
   bool hasEnabledChannel = false;
@@ -271,15 +277,17 @@ void sendSMSToServer(const char* sender, const char* message, const char* timest
 
   if (!hasEnabledChannel) {
     logCaptureLn(String("没有启用的推送通道"));
-    return;
+    return false;
   }
 
   logCaptureLn(String("\n=== 开始多通道推送 ==="));
+  bool anySuccess = false;
   for (int i = 0; i < MAX_PUSH_CHANNELS; i++) {
     if (isPushChannelValid(config.pushChannels[i])) {
-      sendToChannel(config.pushChannels[i], sender, message, timestamp);
+      anySuccess = sendToChannel(config.pushChannels[i], sender, message, timestamp) || anySuccess;
       delay(100); // 短暂延迟避免请求过快
     }
   }
   logCaptureLn(String("=== 多通道推送完成 ===\n"));
+  return anySuccess;
 }
